@@ -151,7 +151,7 @@ export class ControlsLayer extends UILayer {
   public async deleteMessage(
     chatId: string,
     messageId: string[] | string,
-    onlyLocal = false,
+    onlyLocal = true,
     deleteMediaInDevice = true
   ) {
     await evaluateAndReturn(
@@ -161,7 +161,7 @@ export class ControlsLayer extends UILayer {
           chatId,
           messageId,
           deleteMediaInDevice,
-          !onlyLocal
+          onlyLocal
         ),
       { chatId, messageId, onlyLocal, deleteMediaInDevice }
     );
