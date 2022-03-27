@@ -21,7 +21,6 @@ import * as path from 'path';
 import * as rimraf from 'rimraf';
 import * as waVersion from '@wppconnect/wa-version';
 import axios from 'axios';
-import { addExitCallback } from 'catch-exit';
 import { Browser, BrowserContext, Page } from 'puppeteer';
 import puppeteer from 'puppeteer-extra';
 import { CreateConfig } from '../config/create-config';
@@ -111,7 +110,6 @@ export async function injectApi(page: Page) {
   const injected = await page
     .evaluate(() => {
       // @ts-ignore
-      localStorage.setItem('md-opted-in', 'false');
       return (
         typeof window.WAPI !== 'undefined' &&
         typeof window.Store !== 'undefined'
@@ -214,13 +212,11 @@ export async function initBrowser(
         if (
           path.relative(os.tmpdir(), tmpUserDataDir).startsWith('puppeteer')
         ) {
-          addExitCallback((signal) => {
+          process.on('exit', () => {
             // Remove only on exit signal
-            if (signal === 'exit') {
-              try {
-                rimraf.sync(tmpUserDataDir);
-              } catch (error) {}
-            }
+            try {
+              rimraf.sync(tmpUserDataDir);
+            } catch (error) {}
           });
         }
       }

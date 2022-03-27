@@ -109,14 +109,19 @@ export class HostLayer {
       );
     }
 
-    if (isValidSessionToken(sessionToken)) {
+    const isValidToken = isValidSessionToken(sessionToken);
+    if (isValidToken) {
       this.log('verbose', 'Injecting session token', { type: 'token' });
     }
+
+    const hasUserDataDir = !!this.options?.puppeteerOptions?.userDataDir;
+
+    let clear = !hasUserDataDir || (hasUserDataDir && !isValidToken);
 
     await initWhatsapp(
       this.page,
       sessionToken,
-      !this.options?.puppeteerOptions?.userDataDir,
+      clear,
       this.options.whatsappVersion
     );
 
@@ -360,22 +365,6 @@ export class HostLayer {
   }
 
   /**
-   * Delete the Service Workers
-   * @category Host
-   */
-  public async killServiceWorker() {
-    return await evaluateAndReturn(this.page, () => WAPI.killServiceWorker());
-  }
-
-  /**
-   * Load the service again
-   * @category Host
-   */
-  public async restartService() {
-    return await evaluateAndReturn(this.page, () => WAPI.restartService());
-  }
-
-  /**
    * @category Host
    * @returns Current host device details
    */
@@ -419,7 +408,7 @@ export class HostLayer {
    */
   public async getConnectionState(): Promise<SocketState> {
     return await evaluateAndReturn(this.page, () => {
-      return WPP.whatsapp.State.state as SocketState;
+      return WPP.whatsapp.Socket.state as SocketState;
     });
   }
 
@@ -474,6 +463,6 @@ export class HostLayer {
    * @category Host
    */
   public async isMultiDevice() {
-    return await evaluateAndReturn(this.page, () => WPP.auth.isMultiDevice());
+    return await evaluateAndReturn(this.page, () => WPP.conn.isMultiDevice());
   }
 }

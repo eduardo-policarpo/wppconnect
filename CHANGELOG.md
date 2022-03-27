@@ -1,3 +1,30 @@
+## 1.12.8 (2022-03-13)
+
+
+### Bug Fixes
+
+* Fixed stuck state after logout ([bb9695a](https://github.com/wppconnect-team/wppconnect/commit/bb9695a61404a062daf1d0995ad2bb10af7c5006))
+
+
+
+## 1.12.7 (2022-03-03)
+
+
+### Bug Fixes
+
+* Fixed onParticipantsChanged and onPresenceChanged function (fix [#864](https://github.com/wppconnect-team/wppconnect/issues/864), fix [#911](https://github.com/wppconnect-team/wppconnect/issues/911)) ([aff7f6c](https://github.com/wppconnect-team/wppconnect/commit/aff7f6cd34c22c086789ca4871c3113d8d8b2bb8))
+
+
+
+## 1.12.6 (2022-02-22)
+
+
+### Bug Fixes
+
+* Fixed getGroupMembersIds and getGroupMembers for large chats (fix [#892](https://github.com/wppconnect-team/wppconnect/issues/892)) ([9cc34a5](https://github.com/wppconnect-team/wppconnect/commit/9cc34a5fddef52b01feba6194fff31aa19b388f0))
+
+
+
 ## 1.12.5 (2022-02-06)
 
 

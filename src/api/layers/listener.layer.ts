@@ -15,7 +15,7 @@
  * along with WPPConnect.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { EventEmitter } from 'events';
+import { EventEmitter, captureRejectionSymbol } from 'events';
 import { Page } from 'puppeteer';
 import { CreateConfig } from '../../config/create-config';
 import { evaluateAndReturn } from '../helpers';
@@ -45,7 +45,9 @@ declare global {
 }
 
 export class ListenerLayer extends ProfileLayer {
-  private listenerEmitter = new EventEmitter();
+  private listenerEmitter = new EventEmitter({
+    captureRejections: true,
+  });
 
   constructor(public page: Page, session?: string, options?: CreateConfig) {
     super(page, session, options);
@@ -53,6 +55,22 @@ export class ListenerLayer extends ProfileLayer {
     this.listenerEmitter.on(ExposedFn.onInterfaceChange, (state) => {
       this.log('http', `Current state: ${state.mode} (${state.displayInfo})`);
     });
+    this.listenerEmitter[captureRejectionSymbol] = (
+      reason: any,
+      event: string
+    ) => {
+      let message = `Unhandled Rejection in a ${event} event: `;
+      if (reason instanceof Error) {
+        if (reason.stack) {
+          message += reason.stack;
+        } else {
+          message += reason.toString();
+        }
+      } else {
+        message += JSON.stringify(reason);
+      }
+      this.log('error', reason);
+    };
   }
 
   protected async afterPageLoad() {
@@ -82,66 +100,114 @@ export class ListenerLayer extends ProfileLayer {
 
     await this.page
       .evaluate(() => {
-        if (!window['onMessage'].exposed) {
-          window.WAPI.waitNewMessages(false, (data) => {
-            data.forEach((message) => {
-              window['onMessage'](message);
+        try {
+          if (!window['onMessage'].exposed) {
+            window.WAPI.waitNewMessages(false, (data) => {
+              data.forEach((message) => {
+                window['onMessage'](message);
+              });
             });
-          });
-          window['onMessage'].exposed = true;
+            window['onMessage'].exposed = true;
+          }
+        } catch (error) {
+          console.error(error);
         }
-        if (!window['onAck'].exposed) {
-          window.WAPI.waitNewAcknowledgements(window['onAck']);
-          window['onAck'].exposed = true;
+        try {
+          if (!window['onAck'].exposed) {
+            window.WAPI.waitNewAcknowledgements(window['onAck']);
+            window['onAck'].exposed = true;
+          }
+        } catch (error) {
+          console.error(error);
         }
-        if (!window['onAnyMessage'].exposed) {
-          window.WAPI.allNewMessagesListener(window['onAnyMessage']);
-          window['onAnyMessage'].exposed = true;
+        try {
+          if (!window['onAnyMessage'].exposed) {
+            window.WAPI.allNewMessagesListener(window['onAnyMessage']);
+            window['onAnyMessage'].exposed = true;
+          }
+        } catch (error) {
+          console.error(error);
         }
-        if (!window['onStateChange'].exposed) {
-          window.WAPI.onStateChange(window['onStateChange']);
-          window['onStateChange'].exposed = true;
+        try {
+          if (!window['onStateChange'].exposed) {
+            window.WAPI.onStateChange(window['onStateChange']);
+            window['onStateChange'].exposed = true;
+          }
+        } catch (error) {
+          console.error(error);
         }
-        if (!window['onStreamChange'].exposed) {
-          window.WAPI.onStreamChange(window['onStreamChange']);
-          window['onStreamChange'].exposed = true;
+        try {
+          if (!window['onStreamChange'].exposed) {
+            window.WAPI.onStreamChange(window['onStreamChange']);
+            window['onStreamChange'].exposed = true;
+          }
+        } catch (error) {
+          console.error(error);
         }
-        if (!window['onAddedToGroup'].exposed) {
-          window.WAPI.onAddedToGroup(window['onAddedToGroup']);
-          window['onAddedToGroup'].exposed = true;
+        try {
+          if (!window['onAddedToGroup'].exposed) {
+            window.WAPI.onAddedToGroup(window['onAddedToGroup']);
+            window['onAddedToGroup'].exposed = true;
+          }
+        } catch (error) {
+          console.error(error);
         }
-        if (!window['onIncomingCall'].exposed) {
-          window.WAPI.onIncomingCall(window['onIncomingCall']);
-          window['onIncomingCall'].exposed = true;
+        try {
+          if (!window['onIncomingCall'].exposed) {
+            window.WAPI.onIncomingCall(window['onIncomingCall']);
+            window['onIncomingCall'].exposed = true;
+          }
+        } catch (error) {
+          console.error(error);
         }
-        if (!window['onInterfaceChange'].exposed) {
-          window.WAPI.onInterfaceChange(window['onInterfaceChange']);
-          window['onInterfaceChange'].exposed = true;
+        try {
+          if (!window['onInterfaceChange'].exposed) {
+            window.WAPI.onInterfaceChange(window['onInterfaceChange']);
+            window['onInterfaceChange'].exposed = true;
+          }
+        } catch (error) {
+          console.error(error);
         }
-        if (!window['onNotificationMessage'].exposed) {
-          window.WAPI.onNotificationMessage(window['onNotificationMessage']);
-          window['onNotificationMessage'].exposed = true;
+        try {
+          if (!window['onNotificationMessage'].exposed) {
+            window.WAPI.onNotificationMessage(window['onNotificationMessage']);
+            window['onNotificationMessage'].exposed = true;
+          }
+        } catch (error) {
+          console.error(error);
         }
-        if (!window['onPresenceChanged'].exposed) {
-          window.WAPI.onPresenceChanged(window['onPresenceChanged']);
-          window['onPresenceChanged'].exposed = true;
+        try {
+          if (!window['onPresenceChanged'].exposed) {
+            window.WAPI.onPresenceChanged(window['onPresenceChanged']);
+            window['onPresenceChanged'].exposed = true;
+          }
+        } catch (error) {
+          console.error(error);
         }
-        if (!window['onLiveLocation'].exposed) {
-          window.WAPI.onLiveLocation(window['onLiveLocation']);
-          window['onLiveLocation'].exposed = true;
+        try {
+          if (!window['onLiveLocation'].exposed) {
+            window.WAPI.onLiveLocation(window['onLiveLocation']);
+            window['onLiveLocation'].exposed = true;
+          }
+        } catch (error) {
+          console.error(error);
         }
-        if (!window['onRevokedMessage'].exposed) {
-          WPP.chat.on('msg_revoke', (data) => {
-            const eventData = {
-              author: data.author,
-              from: data.from,
-              to: data.to,
-              id: data.id._serialized,
-              refId: data.refId._serialized,
-            };
-            window['onRevokedMessage'](eventData);
-          });
-          window['onRevokedMessage'].exposed = true;
+        try {
+          if (!window['onRevokedMessage'].exposed) {
+            WPP.chat.on('msg_revoke', (data) => {
+              const eventData = {
+                author: data.author,
+                from: data.from,
+                to: data.to,
+                id: data.id._serialized,
+                refId: data.refId._serialized,
+              };
+              window['onRevokedMessage'](eventData);
+            });
+            window['onRevokedMessage'].exposed = true;
+          }
+        } catch (error) {
+          console.error(error);
         }
       })
       .catch(() => {});
