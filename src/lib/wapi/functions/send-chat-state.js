@@ -15,8 +15,9 @@
  * along with WPPConnect.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-export async function sendChatstate(state, chatId) {
+export async function sendChatstate(state, chatId, duration) {
   state = parseInt(state, 10);
+  duration = parseInt(duration, 10);
 
   const chat = WPP.whatsapp.ChatStore.get(chatId);
 
@@ -31,9 +32,15 @@ export async function sendChatstate(state, chatId) {
   switch (state) {
     case 0:
       window.Store.ChatStates.sendChatStateComposing(chat.id);
+      setTimeout(() => {
+      window.Store.ChatStates.sendChatStatePaused(chat.id);
+      }, duration);
       break;
     case 1:
       window.Store.ChatStates.sendChatStateRecording(chat.id);
+      setTimeout(() => {
+      window.Store.ChatStates.sendChatStatePaused(chat.id);
+      }, duration);
       break;
     case 2:
       window.Store.ChatStates.sendChatStatePaused(chat.id);
