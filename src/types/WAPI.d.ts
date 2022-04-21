@@ -108,7 +108,7 @@ interface WAPI {
   ) => Promise<object>;
   rejectCall: (callId?: string) => Promise<number>;
   restartService: () => boolean;
-  sendChatstate: (chatState: string, chatId: string) => void;
+  sendChatstate: (chatState: string, chatId: string, duration: number) => void;
   sendFile: (
     base64: string,
     to: string,
