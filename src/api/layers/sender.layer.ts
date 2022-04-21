@@ -1001,15 +1001,16 @@ export class SenderLayer extends ListenerLayer {
    * @category Chat
    * @param chatState
    * @param chatId
+   * @param duration
    * @deprecated Deprecated in favor of Use startTyping or startRecording functions
    */
-  public async setChatState(chatId: string, chatState: ChatState) {
+  public async setChatState(chatId: string, chatState: ChatState, duration: number) {
     return await evaluateAndReturn(
       this.page,
-      ({ chatState, chatId }) => {
-        WAPI.sendChatstate(chatState, chatId);
+      ({ chatState, chatId, duration }) => {
+        WAPI.sendChatstate(chatState, chatId, duration);
       },
-      { chatState, chatId }
+      { chatState, chatId, duration }
     );
   }
 }
