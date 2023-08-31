@@ -25,8 +25,9 @@ import {
   evaluateAndReturn,
 } from '../helpers';
 import { CreateConfig } from '../../config/create-config';
+import { StatusLayer } from './status.layer';
 
-export class ProfileLayer extends HostLayer {
+export class ProfileLayer extends StatusLayer {
   constructor(public page: Page, session?: string, options?: CreateConfig) {
     super(page, session, options);
   }
@@ -150,12 +151,19 @@ export class ProfileLayer extends HostLayer {
    * @param name
    */
   public async setProfileName(name: string) {
-    return evaluateAndReturn(
+    return await evaluateAndReturn(
       this.page,
-      ({ name }) => {
-        WAPI.setMyName(name);
-      },
+      ({ name }) => WPP.profile.setMyProfileName(name),
       { name }
+    );
+  }
+  /**
+   * Remove your profile picture
+   * @category Profile
+   */
+  public async removeMyProfilePicture() {
+    return await evaluateAndReturn(this.page, () =>
+      WPP.profile.removeMyProfilePicture()
     );
   }
 }

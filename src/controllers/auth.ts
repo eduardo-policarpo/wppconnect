@@ -15,16 +15,12 @@
  * along with WPPConnect.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
 import * as puppeteer from 'puppeteer';
 import * as qrcode from 'qrcode-terminal';
-import { puppeteerConfig } from '../config/puppeteer.config';
-import { isValidSessionToken } from '../token-store';
 
 export const getInterfaceStatus = async (
   waPage: puppeteer.Page
-): Promise<string | null> => {
+): Promise<puppeteer.HandleFor<Awaited<ReturnType<any>>>> => {
   return await waPage
     .waitForFunction(
       () => {
@@ -36,10 +32,7 @@ export const getInterfaceStatus = async (
           return 'UNPAIRED';
         }
 
-        const streamStatus =
-          window['Store'] &&
-          window['Store'].Stream &&
-          window['Store'].Stream.displayInfo;
+        const streamStatus = WPP?.whatsapp?.Stream?.displayInfo;
         if (['PAIRING', 'RESUMING', 'SYNCING'].includes(streamStatus)) {
           return 'PAIRING';
         }
@@ -54,8 +47,10 @@ export const getInterfaceStatus = async (
         polling: 100,
       }
     )
-    .then(async (element) => {
-      return (await element.evaluate((a) => a)) as string;
+    .then(async (element: puppeteer.HandleFor<Awaited<ReturnType<any>>>) => {
+      return (await element.evaluate((a: any) => a)) as puppeteer.HandleFor<
+        ReturnType<any>
+      >;
     })
     .catch(() => null);
 };
@@ -65,40 +60,24 @@ export const getInterfaceStatus = async (
  * @returns true if is authenticated, false otherwise
  * @param waPage
  */
-export const isAuthenticated = async (waPage: puppeteer.Page) => {
-  const status = await getInterfaceStatus(waPage);
-  if (typeof status !== 'string') {
-    return null;
-  }
-
-  return ['CONNECTED', 'PAIRING'].includes(status);
+export const isAuthenticated = (waPage: puppeteer.Page) => {
+  return waPage.evaluate(() => WPP.conn.isRegistered());
 };
 
 export const needsToScan = async (waPage: puppeteer.Page) => {
-  const status = await getInterfaceStatus(waPage);
-  if (typeof status !== 'string') {
-    return null;
-  }
+  const connected = await isAuthenticated(waPage);
 
-  return status === 'UNPAIRED';
+  return !connected;
 };
 
 export const isInsideChat = async (waPage: puppeteer.Page) => {
-  const status = await getInterfaceStatus(waPage);
-  if (typeof status !== 'string') {
-    return null;
-  }
-
-  return status === 'CONNECTED';
+  return await waPage.evaluate(() => WPP.conn.isMainReady());
 };
 
 export const isConnectingToPhone = async (waPage: puppeteer.Page) => {
-  const status = await getInterfaceStatus(waPage);
-  if (typeof status !== 'string') {
-    return null;
-  }
-
-  return status === 'PAIRING';
+  return await waPage.evaluate(
+    () => WPP.conn.isMainLoaded() && !WPP.conn.isMainReady()
+  );
 };
 
 export async function asciiQr(code: string): Promise<string> {
@@ -107,90 +86,4 @@ export async function asciiQr(code: string): Promise<string> {
       resolve(qrcode);
     });
   });
-}
-
-export async function injectSessionToken(
-  page: puppeteer.Page,
-  token?: any,
-  clear = true
-) {
-  if (!token || !isValidSessionToken(token)) {
-    token = {};
-  }
-
-  await page.setRequestInterception(true);
-
-  // @todo Move to another file
-  const reqHandler = function (req: puppeteer.PageEventObject['request']) {
-    if (req.url().endsWith('wppconnect-banner.jpeg')) {
-      req.respond({
-        body: fs.readFileSync(
-          path.resolve(__dirname + '/../../img/wppconnect-banner.jpeg')
-        ),
-        contentType: 'image/jpeg',
-      });
-      return;
-    }
-
-    if (req.resourceType() !== 'document') {
-      req.continue();
-      return;
-    }
-
-    req.respond({
-      status: 200,
-      contentType: 'text/html',
-      body: `
-<!doctype html>
-<html lang=en>
-  <head>
-    <title>Initializing WhatsApp</title>
-    <style>
-      body {
-        height: 100vh;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-family: arial, sans-serif;
-        background-color: #e6e6e6;
-      }
-      img {
-        display: block;
-        max-width: 100%;
-        max-height:100%;
-      }
-      h1 {
-        text-align: center;
-      }
-    </style>
-  </head>
-  <body>
-    <div>
-      <img src="wppconnect-banner.jpeg" />
-      <h1>Initializing WhatsApp ...</h1>
-    </div>
-  </body>
-</html>`,
-    });
-  };
-  page.on('request', reqHandler);
-
-  await page.goto(puppeteerConfig.whatsappUrl);
-
-  if (clear) {
-    await page.evaluate((session) => {
-      localStorage.clear();
-    });
-  }
-  await page.evaluate((session) => {
-    Object.keys(session).forEach((key) => {
-      localStorage.setItem(key, session[key]);
-    });
-    localStorage.setItem('remember-me', 'true');
-  }, token as any);
-
-  // Disable
-  page.removeAllListeners('request');
-
-  await page.setRequestInterception(false);
 }

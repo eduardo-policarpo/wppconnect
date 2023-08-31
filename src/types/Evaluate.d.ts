@@ -15,7 +15,14 @@
  * along with WPPConnect.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-export async function restartService() {
-  await Store.ServiceWorker.default.restart();
-  return true;
-}
+export declare type EvaluateFn<T = any, U = any, V = any> =
+  | string
+  | ((arg1: T, ...args: U[]) => V);
+
+export declare type EvaluateFnReturnType<T extends EvaluateFn> = T extends (
+  ...args: any[]
+) => infer R
+  ? R
+  : any;
+
+export declare type SerializableOrJSHandle = Serializable | JSHandle;

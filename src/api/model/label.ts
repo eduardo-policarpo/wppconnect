@@ -14,10 +14,10 @@
  * You should have received a copy of the GNU Lesser General Public License
  * along with WPPConnect.  If not, see <https://www.gnu.org/licenses/>.
  */
-
-export enum GroupChangeEvent {
-  Add = 'add',
-  Inivite = 'invite',
-  Leave = 'leave',
-  Remove = 'remove',
+export interface Label {
+  id: string;
+  name: string;
+  color: number | null;
+  count: number;
+  hexColor: string;
 }

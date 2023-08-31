@@ -63,20 +63,17 @@ import {
   sendFile,
   sendPtt,
   sendImage,
-  sendImageAsSticker,
   sendImageWithProduct,
+  createProduct,
   sendLocation,
   sendMessage,
   sendMessage2,
   sendMessageWithTags,
   sendMessageWithThumb,
-  sendSticker,
   sendVideoAsGif,
   setMyName,
   getTheme,
   setTheme,
-  restartService,
-  killServiceWorker,
   sendLinkPreview,
   scope,
   getchatId,
@@ -94,7 +91,6 @@ import {
   subscribePresence,
   unsubscribePresence,
   getMessages,
-  rejectCall,
   setOnlinePresence,
 } from './functions';
 import {
@@ -128,26 +124,39 @@ import {
 import { getBusinessProfilesProducts, getOrderbyMsg } from './business';
 import { storeObjects } from './store/store-objects';
 
-window['webpackJsonp'] = window['webpackJsonp'] || [];
-window['webpackChunkbuild'] = window['webpackChunkbuild'] || [];
+const readyPromise = new Promise((resolve) => {
+  if (WPP.isReady) {
+    resolve();
+    return;
+  }
+  WPP.webpack.onReady(resolve);
+});
 
 if (typeof window.Store === 'undefined') {
   window.Store = {};
   window.Store.promises = {};
 
-  for (const store of storeObjects) {
-    window.Store.promises[store.id] = Promise.resolve(
-      WPP.webpack.search(store.conditions)
-    )
-      .then(store.conditions)
-      .then((m) => {
-        if (store.id === 'Store') {
-          window.Store = Object.assign({}, window.Store, m);
-        } else {
-          window.Store[store.id] = m;
-        }
-      });
-  }
+  readyPromise.then(() => {
+    for (const store of storeObjects) {
+      window.Store.promises[store.id] = Promise.resolve(
+        WPP.webpack.search(store.conditions)
+      )
+        .then((m) => {
+          if (!m) {
+            console.error(`Store Object '${store.id}' was not found`);
+          }
+          return m;
+        })
+        .then(store.conditions)
+        .then((m) => {
+          if (store.id === 'Store') {
+            window.Store = Object.assign({}, window.Store, m);
+          } else {
+            window.Store[store.id] = m;
+          }
+        });
+    }
+  });
 }
 
 if (typeof window.WAPI === 'undefined') {
@@ -194,11 +203,9 @@ if (typeof window.WAPI === 'undefined') {
   window.WAPI.sendVideoAsGif = sendVideoAsGif;
   window.WAPI.processFiles = processFiles;
   window.WAPI.sendImageWithProduct = sendImageWithProduct;
+  window.WAPI.createProduct = createProduct;
   window.WAPI.forwardMessages = forwardMessages;
-  window.WAPI._sendSticker = sendSticker;
   window.WAPI.encryptAndUploadFile = encryptAndUploadFile;
-  window.WAPI.sendImageAsSticker = sendImageAsSticker;
-  window.WAPI.sendImageAsStickerGif = sendImageAsSticker;
   window.WAPI.setOnlinePresence = setOnlinePresence;
   window.WAPI.sendLocation = sendLocation;
   window.WAPI.sendLinkPreview = sendLinkPreview;
@@ -253,8 +260,6 @@ if (typeof window.WAPI === 'undefined') {
   window.WAPI.getBatteryLevel = getBatteryLevel;
   window.WAPI.base64ImageToFile = base64ToFile;
   window.WAPI.base64ToFile = base64ToFile;
-  window.WAPI.restartService = restartService;
-  window.WAPI.killServiceWorker = killServiceWorker;
   window.WAPI.sendMute = sendMute;
   window.WAPI.startPhoneWatchdog = startPhoneWatchdog;
   window.WAPI.stopPhoneWatchdog = stopPhoneWatchdog;
@@ -264,9 +269,6 @@ if (typeof window.WAPI === 'undefined') {
   // business functions
   window.WAPI.getBusinessProfilesProducts = getBusinessProfilesProducts;
   window.WAPI.getOrderbyMsg = getOrderbyMsg;
-
-  // call functions
-  window.WAPI.rejectCall = rejectCall;
 
   // Listeners initialization
   window.WAPI._newMessagesQueue = [];
@@ -449,15 +451,23 @@ if (typeof window.WAPI === 'undefined') {
     return await WPP.conn.logout();
   };
 
-  addOnStreamChange();
-  addOnStateChange();
-  initNewMessagesListener();
-  addNewMessagesListener();
-  allNewMessagesListener();
-  addOnNewAcks();
-  addOnAddedToGroup();
-  addOnLiveLocation();
-  addOnParticipantsChange();
-  addOnNotificationMessage();
-  addOnPresenceChanged();
+  /**
+   * @todo Temporary fix while is not implemented on WA-JS
+   */
+  window.WAPI.isRegistered = function () {
+    const m = WPP.webpack.search((m) => m.isRegistered);
+    return m.isRegistered();
+  };
+
+  readyPromise.then(addOnStreamChange);
+  readyPromise.then(addOnStateChange);
+  readyPromise.then(initNewMessagesListener);
+  readyPromise.then(addNewMessagesListener);
+  readyPromise.then(allNewMessagesListener);
+  readyPromise.then(addOnNewAcks);
+  readyPromise.then(addOnAddedToGroup);
+  readyPromise.then(addOnLiveLocation);
+  readyPromise.then(addOnParticipantsChange);
+  readyPromise.then(addOnNotificationMessage);
+  readyPromise.then(addOnPresenceChanged);
 }

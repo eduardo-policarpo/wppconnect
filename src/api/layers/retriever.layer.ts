@@ -24,8 +24,10 @@ import {
   ContactStatus,
   ProfilePicThumbObj,
   WhatsappProfile,
+  Wid,
 } from '../model';
 import { SenderLayer } from './sender.layer';
+import { ChatListOptions } from '@wppconnect/wa-js/dist/chat';
 
 export class RetrieverLayer extends SenderLayer {
   constructor(public page: Page, session?: string, options?: CreateConfig) {
@@ -112,15 +114,65 @@ export class RetrieverLayer extends SenderLayer {
 
   /**
    * Retrieves all chats
+   * Deprecated in favor of {@link listChats}
+   *
    * @category Chat
    * @returns array of [Chat]
+   * @deprecated Deprecated in favor of listChats.
    */
   public async getAllChats(withNewMessageOnly = false) {
+    this.logger.warn(
+      'Deprecated: This function [getAllChats] is deprecated in favor of the listChats function. Please update your code accordingly.'
+    );
     if (withNewMessageOnly) {
       return evaluateAndReturn(this.page, () => WAPI.getAllChatsWithNewMsg());
     } else {
       return evaluateAndReturn(this.page, () => WAPI.getAllChats());
     }
+  }
+
+  /**
+   * Return list of chats
+   *  * @example
+   * ```javascript
+   * // All chats
+   * const chats = await client.listChats();
+   *
+   * // Some chats
+   * const chats = client.listChats({count: 20});
+   *
+   * // 20 chats before specific chat
+   * const chats = client.listChats({count: 20, direction: 'before', id: '[number]@c.us'});
+   *
+   * // Only users chats
+   * const chats = await client.listChats({onlyUsers: true});
+   *
+   * // Only groups chats
+   * const chats = await client.listChats({onlyGroups: true});
+   *
+   * // Only with label Text
+   * const chats = await client.listChats({withLabels: ['Test']});
+   *
+   * // Only with label id
+   * const chats = await client.listChats({withLabels: ['1']});
+   *
+   * // Only with label with one of text or id
+   * const chats = await client.listChats({withLabels: ['Alfa','5']});
+   * ```
+   * @category Chat
+   * @returns array of [Chat]
+   */
+  public async listChats(options?: ChatListOptions): Promise<Chat[]> {
+    return await evaluateAndReturn(
+      this.page,
+      async ({ options }) => {
+        const chats = await WPP.chat.list(options);
+
+        const serialized = chats.map((c) => WAPI._serializeChatObj(c));
+        return serialized;
+      },
+      { options }
+    );
   }
 
   /**
@@ -139,10 +191,16 @@ export class RetrieverLayer extends SenderLayer {
 
   /**
    * Retrieves all chats with messages
+   * Deprecated in favor of {@link listChats}
+   *
    * @category Chat
    * @returns array of [Chat]
+   * @deprecated Deprecated in favor of listChats.
    */
   public async getAllChatsWithMessages(withNewMessageOnly = false) {
+    this.logger.warn(
+      'Deprecated: This function [getAllChatsWithMessages] is deprecated in favor of the listChats function. Please update your code accordingly.'
+    );
     return evaluateAndReturn(
       this.page,
       (withNewMessageOnly: boolean) =>
@@ -153,20 +211,32 @@ export class RetrieverLayer extends SenderLayer {
 
   /**
    * Retrieve all groups
+   * Deprecated in favor of {@link listChats}
+   *
    * @category Group
    * @returns array of groups
+   * @deprecated Deprecated in favor of listChats.
    */
-  public async getAllGroups(withNewMessagesOnly = false) {
-    if (withNewMessagesOnly) {
-      // prettier-ignore
-      const chats = await evaluateAndReturn(this.page,() => WAPI.getAllChatsWithNewMsg());
-      return chats.filter((chat) => chat.isGroup);
-    } else {
-      const chats = await evaluateAndReturn(this.page, () =>
-        WAPI.getAllChats()
-      );
-      return chats.filter((chat) => chat.isGroup);
-    }
+  public async getAllGroups(withNewMessagesOnly = false): Promise<Chat[]> {
+    this.logger.warn(
+      'Deprecated: This function [getAllGroups] is deprecated in favor of the listChats function. Please update your code accordingly.'
+    );
+    return await evaluateAndReturn(
+      this.page,
+      async ({ withNewMessagesOnly }) => {
+        const chats = await WPP.chat.list({
+          onlyGroups: true,
+          onlyWithUnreadMessage: withNewMessagesOnly,
+        });
+
+        const groups = await Promise.all(
+          chats.map((c) => WPP.group.ensureGroup(c.id))
+        );
+
+        return groups.map((g) => WAPI._serializeChatObj(g));
+      },
+      { withNewMessagesOnly }
+    );
   }
 
   /**
@@ -274,8 +344,8 @@ export class RetrieverLayer extends SenderLayer {
         const status = await WPP.contact.getStatus(contactId);
 
         return {
-          id: status.id.toString(),
-          status: status.status,
+          id: contactId,
+          status: (status as any)?.status || status,
         };
       },
       contactId
@@ -421,6 +491,93 @@ export class RetrieverLayer extends SenderLayer {
       this.page,
       (chatId: string) => WAPI.getLastSeen(chatId),
       chatId
+    );
+  }
+
+  /**
+   * Get the platform message from message ID
+   *
+   * The platform can be:
+   * android
+   * iphone
+   * web
+   * unknown
+   * @category Chat
+   * @param chatId chat id: xxxxx@c.us
+   */
+  public async getPlatformFromMessage(msgId: string): Promise<string> {
+    return await evaluateAndReturn(
+      this.page,
+      (msgId: string) => WPP.chat.getPlatformFromMessage(msgId),
+      msgId
+    );
+  }
+
+  /**
+   * Get the reactions of a message
+   *
+   * @category Chat
+   */
+  public async getReactions(msgId: string): Promise<{
+    reactionByMe: {
+      id: any;
+      orphan: number;
+      msgId: any;
+      reactionText: string;
+      read: boolean;
+      senderUserJid: string;
+      timestamp: number;
+    };
+    reactions: {
+      aggregateEmoji: string;
+      hasReactionByMe: boolean;
+      senders: {
+        id: any;
+        orphan: number;
+        msgId: any;
+        reactionText: string;
+        read: boolean;
+        senderUserJid: string;
+        timestamp: number;
+      }[];
+    }[];
+  }> {
+    return await evaluateAndReturn(
+      this.page,
+      (msgId: string) => WPP.chat.getReactions(msgId),
+      msgId
+    );
+  }
+
+  /**
+   * Get the votes of a poll message
+   *
+   * @category Chat
+   */
+  public async getVotes(msgId: string): Promise<{
+    msgId: any;
+    chatId: Wid;
+    votes: {
+      selectedOptions: number[];
+      timestamp: number;
+      sender: Wid;
+    }[];
+  }> {
+    return await evaluateAndReturn(
+      this.page,
+      (msgId: string) => WPP.chat.getVotes(msgId),
+      msgId
+    );
+  }
+
+  /**
+   * Get the max number of participants for a group
+   *
+   * @category Group
+   */
+  public async getGroupSizeLimit(): Promise<number> {
+    return await evaluateAndReturn(this.page, () =>
+      WPP.group.getGroupSizeLimit()
     );
   }
 }

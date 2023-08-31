@@ -15,12 +15,15 @@
  * along with WPPConnect.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+import { Page } from 'puppeteer';
+
 import {
   EvaluateFn,
   EvaluateFnReturnType,
-  Page,
   SerializableOrJSHandle,
-} from 'puppeteer';
+} from '../../types/Evaluate';
+
+//EvaluateFn, EvaluateFnReturnType, SerializableOrJSHandle //
 
 export async function evaluateAndReturn<T extends EvaluateFn>(
   page: Page,
@@ -131,7 +134,9 @@ export async function evaluateAndReturn<T extends EvaluateFn>(
     let jsStack = error.stack;
     Error.captureStackTrace(error);
     if (jsStack) {
-      error.stack = (error.stack || '') + '\nJS Stack: ' + jsStack;
+      error.stack = `${
+        error.stack || ''
+      }\nJS Stack: ${jsStack}\nFunction: ${functionText}`;
     }
 
     throw error;

@@ -16,11 +16,15 @@
  */
 
 import type {
+  FileMessageOptions,
   ListMessageOptions,
+  LocationMessageOptions,
+  SendMessageReturn,
   TextMessageOptions,
+  PoolMessageOptions,
 } from '@wppconnect/wa-js/dist/chat';
 import * as path from 'path';
-import { JSONObject, Page } from 'puppeteer';
+import { Page } from 'puppeteer';
 import { CreateConfig } from '../../config/create-config';
 import { convertToMP4GIF } from '../../utils/ffmpeg';
 import { sleep } from '../../utils/sleep';
@@ -32,12 +36,7 @@ import {
   stickerSelect,
 } from '../helpers';
 import { filenameFromMimeType } from '../helpers/filename-from-mimetype';
-import {
-  Message,
-  SendFileResult,
-  SendLinkResult,
-  SendStickerResult,
-} from '../model';
+import { Message, SendFileResult, SendStickerResult } from '../model';
 import { ChatState } from '../model/enum';
 import { ListenerLayer } from './listener.layer';
 
@@ -48,26 +47,26 @@ export class SenderLayer extends ListenerLayer {
 
   /**
    * Automatically sends a link with the auto generated link preview. You can also add a custom message to be added.
+   *
+   * Deprecated: please use {@link sendText}
+   *
    * @category Chat
+   * @deprecated
    * @param chatId
    * @param url string A link, for example for youtube. e.g https://www.youtube.com/watch?v=Zi_XLOBDo_Y&list=RDEMe12_MlgO8mGFdeeftZ2nOQ&start_radio=1
-   * @param title custom text as the message body, this includes the link or will be attached after the link
+   * @param text custom text as the message body, this includes the link or will be attached after the link
    */
-  public async sendLinkPreview(
-    chatId: string,
-    url: string,
-    title: string
-  ): Promise<SendLinkResult> {
+  public async sendLinkPreview(chatId: string, url: string, text: string = '') {
+    const message = text.includes(url) ? text : `${url}\n${text}`;
+
     const result = await evaluateAndReturn(
       this.page,
-      ({ chatId, url, title }) => {
-        return WAPI.sendLinkPreview(chatId, url, title);
+      ({ chatId, message }) => {
+        return WPP.chat.sendTextMessage(chatId, message, { linkPreview: true });
       },
-      { chatId, url, title }
+      { chatId, message }
     );
-    if (result['erro'] == true) {
-      throw result;
-    }
+
     return result;
   }
 
@@ -83,8 +82,17 @@ export class SenderLayer extends ListenerLayer {
    * client.sendText('<number>@c.us', 'A simple message');
    *
    * // With buttons
-   * client.sendText('<number>@c.us', 'A simple message with buttons', {
+   * client.sendText('<number>@c.us', 'WPPConnect message with buttons', {
+   *    useTemplateButtons: true, // False for legacy
    *    buttons: [
+   *      {
+   *        url: 'https://wppconnect.io/',
+   *        text: 'WPPConnect Site'
+   *      },
+   *      {
+   *        phoneNumber: '+55 11 22334455',
+   *        text: 'Call me'
+   *      },
    *      {
    *        id: 'your custom id 1',
    *        text: 'Some text'
@@ -285,39 +293,85 @@ export class SenderLayer extends ListenerLayer {
 
   /**
    * Sends message with thumbnail
+   *
+   * @deprecated: please use {@link sendText} with options
+   *
+   * @deprecated
    * @category Chat
-   * @param thumb
+   * @param pathOrBase64
    * @param url
    * @param title
    * @param description
    * @param chatId
    */
   public async sendMessageWithThumb(
-    thumb: string,
+    pathOrBase64: string,
     url: string,
     title: string,
     description: string,
     chatId: string
   ) {
-    let base64 = await downloadFileToBase64(thumb, [
-      'image/gif',
-      'image/png',
-      'image/jpg',
-      'image/jpeg',
-      'image/webp',
-    ]);
+    let base64: string = '';
+
+    if (pathOrBase64.startsWith('data:')) {
+      base64 = pathOrBase64;
+    } else {
+      let fileContent = await downloadFileToBase64(pathOrBase64, [
+        'image/gif',
+        'image/png',
+        'image/jpg',
+        'image/jpeg',
+        'image/webp',
+      ]);
+      if (!fileContent) {
+        fileContent = await fileToBase64(pathOrBase64);
+      }
+      if (fileContent) {
+        base64 = fileContent;
+      }
+    }
 
     if (!base64) {
-      base64 = await fileToBase64(thumb);
+      const error = new Error('Empty or invalid file or base64');
+      Object.assign(error, {
+        code: 'empty_file',
+      });
+      throw error;
     }
+
+    const mimeInfo = base64MimeType(base64);
+
+    if (!mimeInfo || !mimeInfo.includes('image')) {
+      const error = new Error(
+        'Not an image, allowed formats png, jpeg, webp and gif'
+      );
+      Object.assign(error, {
+        code: 'invalid_image',
+      });
+      throw error;
+    }
+
+    const thumbnail = base64.replace(
+      /^data:image\/(png|jpe?g|webp|gif);base64,/,
+      ''
+    );
 
     return evaluateAndReturn(
       this.page,
-      ({ thumb, url, title, description, chatId }) => {
-        WAPI.sendMessageWithThumb(thumb, url, title, description, chatId);
-      },
+      ({ thumbnail, url, title, description, chatId }) =>
+        WPP.chat.sendTextMessage(chatId, url, {
+          linkPreview: {
+            thumbnail: thumbnail,
+            canonicalUrl: url,
+            description: description,
+            matchedText: url,
+            title: title,
+            richPreviewType: 0,
+            doNotPlayInline: true,
+          },
+        }),
       {
-        base64,
+        thumbnail,
         url,
         title,
         description,
@@ -328,6 +382,11 @@ export class SenderLayer extends ListenerLayer {
 
   /**
    * Replies to given mesage id of given chat id
+   *
+   * Deprecated: Please, use sendText with quotedMsg option
+   *
+   * @deprecated
+   *
    * @category Chat
    * @param to Chat id
    * @param content Message body
@@ -366,17 +425,19 @@ export class SenderLayer extends ListenerLayer {
    * @param filename
    * @param caption
    * @param quotedMessageId Quoted message id
+   * @param messageId Set the id for this message
    */
   public async sendPttFromBase64(
     to: string,
     base64: string,
     filename: string,
     caption?: string,
-    quotedMessageId?: string
+    quotedMessageId?: string,
+    messageId?: string
   ) {
     const result = await evaluateAndReturn(
       this.page,
-      async ({ to, base64, filename, caption, quotedMessageId }) => {
+      async ({ to, base64, filename, caption, quotedMessageId, messageId }) => {
         const result = await WPP.chat.sendFileMessage(to, base64, {
           type: 'audio',
           isPtt: true,
@@ -384,6 +445,7 @@ export class SenderLayer extends ListenerLayer {
           caption,
           quotedMsg: quotedMessageId,
           waitForAck: true,
+          messageId: messageId,
         });
 
         return {
@@ -392,7 +454,7 @@ export class SenderLayer extends ListenerLayer {
           sendMsgResult: await result.sendMsgResult,
         };
       },
-      { to, base64, filename, caption, quotedMessageId }
+      { to, base64, filename, caption, quotedMessageId, messageId }
     );
 
     return result;
@@ -406,13 +468,15 @@ export class SenderLayer extends ListenerLayer {
    * @param filename
    * @param caption
    * @param quotedMessageId Quoted message id
+   * @param messageId Set the id for this message
    */
   public async sendPtt(
     to: string,
     filePath: string,
     filename?: string,
     caption?: string,
-    quotedMessageId?: string
+    quotedMessageId?: string,
+    messageId?: string
   ) {
     return new Promise(async (resolve, reject) => {
       let base64 = await downloadFileToBase64(filePath, [/^audio/]),
@@ -440,7 +504,8 @@ export class SenderLayer extends ListenerLayer {
         base64,
         filename,
         caption,
-        quotedMessageId
+        quotedMessageId,
+        messageId
       )
         .then(resolve)
         .catch(reject);
@@ -450,84 +515,142 @@ export class SenderLayer extends ListenerLayer {
   /**
    * Sends file
    * base64 parameter should have mime type already defined
+   *
+   * Deprecated: please use sendFile with options: sendFile(to, content, options)
+   *
+   * @deprecated
+   *
    * @category Chat
-   * @param to Chat id
+   * @param chatId Chat id
    * @param base64 base64 data
    * @param filename
    * @param caption
    */
   public async sendFileFromBase64(
-    to: string,
+    chatId: string,
     base64: string,
     filename: string,
     caption?: string
-  ): Promise<SendFileResult> {
-    let mimeType = base64MimeType(base64);
-
-    if (!mimeType) {
-      const obj = {
-        erro: true,
-        to: to,
-        text: 'Invalid base64!',
-      };
-      throw obj;
-    }
-
-    filename = filenameFromMimeType(filename, mimeType);
-
-    const type = 'FileFromBase64';
-    const result = await evaluateAndReturn(
-      this.page,
-      ({ to, base64, filename, caption, type }) => {
-        return WAPI.sendFile(base64, to, filename, caption, type);
-      },
-      { to, base64, filename, caption, type }
-    );
-    if (result['erro'] == true) {
-      throw result;
-    }
-    return result;
+  ) {
+    return this.sendFile(chatId, base64, filename, caption);
   }
 
   /**
-   * Sends file from path
+   * Sends file from path or base64
+   *
+   * @example
+   * ```javascript
+   * // Simple message
+   * client.sendFile('<number>@c.us', 'data:text/plain;base64,V1BQQ29ubmVjdA==');
+   *
+   * // With buttons
+   * client.sendFile('<number>@c.us', 'data:text/plain;base64,V1BQQ29ubmVjdA==', {
+   *    useTemplateButtons: true, // False for legacy
+   *    buttons: [
+   *      {
+   *        url: 'https://wppconnect.io/',
+   *        text: 'WPPConnect Site'
+   *      },
+   *      {
+   *        phoneNumber: '+55 11 22334455',
+   *        text: 'Call me'
+   *      },
+   *      {
+   *        id: 'your custom id 1',
+   *        text: 'Some text'
+   *      },
+   *      {
+   *        id: 'another id 2',
+   *        text: 'Another text'
+   *      }
+   *    ],
+   *    title: 'Title text' // Optional
+   *    footer: 'Footer text' // Optional
+   * });
+   * ```
+   *
    * @category Chat
    * @param to Chat id
-   * @param filePath File path
-   * @param filename
-   * @param caption
+   * @param pathOrBase64 File path
+   * @param options
    */
   public async sendFile(
     to: string,
-    filePath: string,
+    pathOrBase64: string,
+    options?: FileMessageOptions
+  );
+  /**
+   * Sends file from path or base64
+   *
+   * Deprecated: please use sendFile with options: sendFile(to, content, options)
+   *
+   * @deprecated
+   *
+   * @category Chat
+   * @param to Chat id
+   * @param pathOrBase64 File path or base64
+   * @param filename The file name
+   * @param caption Caption for the filename
+   */
+  public async sendFile(
+    to: string,
+    pathOrBase64: string,
     filename?: string,
     caption?: string
+  );
+  public async sendFile(
+    to: string,
+    pathOrBase64: string,
+    nameOrOptions?: string | FileMessageOptions,
+    caption?: string
   ) {
-    return new Promise<SendFileResult>(async (resolve, reject) => {
-      let base64 = await downloadFileToBase64(filePath),
-        obj: { erro: boolean; to: string; text: string };
+    let options: FileMessageOptions = { type: 'auto-detect' };
 
-      if (!base64) {
-        base64 = await fileToBase64(filePath);
+    if (typeof nameOrOptions === 'string') {
+      options.filename = nameOrOptions;
+      options.caption = caption;
+    } else if (typeof nameOrOptions === 'object') {
+      options = nameOrOptions;
+    }
+
+    let base64 = '';
+
+    if (pathOrBase64.startsWith('data:')) {
+      base64 = pathOrBase64;
+    } else {
+      let fileContent = await downloadFileToBase64(pathOrBase64);
+      if (!fileContent) {
+        fileContent = await fileToBase64(pathOrBase64);
+      }
+      if (fileContent) {
+        base64 = fileContent;
       }
 
-      if (!base64) {
-        obj = {
-          erro: true,
-          to: to,
-          text: 'No such file or directory, open "' + filePath + '"',
+      if (!options.filename) {
+        options.filename = path.basename(pathOrBase64);
+      }
+    }
+
+    if (!base64) {
+      const error = new Error('Empty or invalid file or base64');
+      Object.assign(error, {
+        code: 'empty_file',
+      });
+      throw error;
+    }
+
+    return evaluateAndReturn(
+      this.page,
+      async ({ to, base64, options }) => {
+        const result = await WPP.chat.sendFileMessage(to, base64, options);
+        return {
+          ack: result.ack,
+          id: result.id,
+          sendMsgResult: await result.sendMsgResult,
         };
-        return reject(obj);
-      }
-
-      if (!filename) {
-        filename = path.basename(filePath);
-      }
-
-      this.sendFileFromBase64(to, base64, filename, caption)
-        .then(resolve)
-        .catch(reject);
-    });
+      },
+      { to, base64, options: options as any }
+    );
   }
 
   /**
@@ -725,111 +848,160 @@ export class SenderLayer extends ListenerLayer {
   /**
    * Generates sticker from the provided animated gif image and sends it (Send image as animated sticker)
    * @category Chat
-   *  @param path image path imageBase64 A valid gif image is required. You can also send via http/https (http://www.website.com/img.gif)
-   *  @param to chatId '000000000000@c.us'
+   * @param pathOrBase64 image path imageBase64 A valid gif image is required. You can also send via http/https (http://www.website.com/img.gif)
+   * @param to chatId '000000000000@c.us'
    */
-  public async sendImageAsStickerGif(
-    to: string,
-    path: string
-  ): Promise<SendStickerResult | false> {
-    let b64 = await downloadFileToBase64(path, ['image/gif', 'image/webp']);
-    if (!b64) {
-      b64 = await fileToBase64(path);
-    }
-    if (b64) {
-      const buff = Buffer.from(
-        b64.replace(/^data:image\/(gif|webp);base64,/, ''),
-        'base64'
-      );
-      const mimeInfo = base64MimeType(b64);
-      if (!mimeInfo || mimeInfo.includes('image')) {
-        let obj = await stickerSelect(buff, 1);
-        if (typeof obj == 'object') {
-          let _webb64 = obj['webpBase64'];
-          let _met = obj['metadata'];
+  public async sendImageAsStickerGif(to: string, pathOrBase64: string) {
+    let base64: string = '';
 
-          const result = await evaluateAndReturn(
-            this.page,
-            ({ _webb64, to, _met }) => {
-              return WAPI.sendImageAsSticker(_webb64, to, _met, 'StickerGif');
-            },
-            { _webb64, to, _met }
-          );
-          if (result['erro'] == true) {
-            throw result;
-          }
-          return result;
-        } else {
-          throw {
-            error: true,
-            message: 'Error with sharp library, check the console log',
-          };
-        }
-      } else {
-        console.log('Not an image, allowed format gif');
-        return false;
+    if (pathOrBase64.startsWith('data:')) {
+      base64 = pathOrBase64;
+    } else {
+      let fileContent = await downloadFileToBase64(pathOrBase64, [
+        'image/gif',
+        'image/webp',
+      ]);
+      if (!fileContent) {
+        fileContent = await fileToBase64(pathOrBase64);
+      }
+      if (fileContent) {
+        base64 = fileContent;
       }
     }
+
+    if (!base64) {
+      const error = new Error('Empty or invalid file or base64');
+      Object.assign(error, {
+        code: 'empty_file',
+      });
+      throw error;
+    }
+
+    const mimeInfo = base64MimeType(base64);
+
+    if (!mimeInfo || !mimeInfo.includes('image')) {
+      const error = new Error('Not an image, allowed formats gig and webp');
+      Object.assign(error, {
+        code: 'invalid_image',
+      });
+      throw error;
+    }
+
+    const buff = Buffer.from(
+      base64.replace(/^data:image\/(gif|webp);base64,/, ''),
+      'base64'
+    );
+
+    let obj = await stickerSelect(buff, 1);
+
+    if (!obj) {
+      const error = new Error(
+        'Error with sharp library, check the console log'
+      );
+      Object.assign(error, {
+        code: 'sharp_error',
+      });
+      throw error;
+    }
+
+    const { webpBase64 } = obj;
+
+    return await evaluateAndReturn(
+      this.page,
+      ({ to, webpBase64 }) => {
+        return WPP.chat.sendFileMessage(to, webpBase64, {
+          type: 'sticker',
+        });
+      },
+      { to, webpBase64 }
+    );
   }
 
   /**
    * Generates sticker from given image and sends it (Send Image As Sticker)
    * @category Chat
-   * @param path image path imageBase64 A valid png, jpg and webp image is required. You can also send via http/https (http://www.website.com/img.gif)
+   * @param pathOrBase64 image path imageBase64 A valid png, jpg and webp image is required. You can also send via http/https (http://www.website.com/img.gif)
    * @param to chatId '000000000000@c.us'
    */
-  public async sendImageAsSticker(
-    to: string,
-    path: string
-  ): Promise<SendStickerResult | false> {
-    let b64 = await downloadFileToBase64(path, [
-      'image/gif',
-      'image/png',
-      'image/jpg',
-      'image/jpeg',
-      'image/webp',
-    ]);
-    if (!b64) {
-      b64 = await fileToBase64(path);
-    }
-    if (b64) {
-      const buff = Buffer.from(
-        b64.replace(/^data:image\/(png|jpe?g|webp|gif);base64,/, ''),
-        'base64'
-      );
-      const mimeInfo = base64MimeType(b64);
+  public async sendImageAsSticker(to: string, pathOrBase64: string) {
+    let base64: string = '';
 
-      if (!mimeInfo || mimeInfo.includes('image')) {
-        let obj = await stickerSelect(buff, 0);
-        if (typeof obj == 'object') {
-          let _webb64 = obj['webpBase64'];
-          let _met = obj['metadata'];
-          const result = await evaluateAndReturn(
-            this.page,
-            ({ _webb64, to, _met }) => {
-              return WAPI.sendImageAsSticker(_webb64, to, _met, 'Sticker');
-            },
-            { _webb64, to, _met }
-          );
-          if (result['erro'] == true) {
-            throw result;
-          }
-          return result;
-        } else {
-          throw {
-            error: true,
-            message: 'Error with sharp library, check the console log',
-          };
-        }
-      } else {
-        console.log('Not an image, allowed formats png, jpeg and webp');
-        return false;
+    if (pathOrBase64.startsWith('data:')) {
+      base64 = pathOrBase64;
+    } else {
+      let fileContent = await downloadFileToBase64(pathOrBase64, [
+        'image/gif',
+        'image/png',
+        'image/jpg',
+        'image/jpeg',
+        'image/webp',
+      ]);
+      if (!fileContent) {
+        fileContent = await fileToBase64(pathOrBase64);
+      }
+      if (fileContent) {
+        base64 = fileContent;
       }
     }
+
+    if (!base64) {
+      const error = new Error('Empty or invalid file or base64');
+      Object.assign(error, {
+        code: 'empty_file',
+      });
+      throw error;
+    }
+
+    const mimeInfo = base64MimeType(base64);
+
+    if (!mimeInfo || !mimeInfo.includes('image')) {
+      const error = new Error(
+        'Not an image, allowed formats png, jpeg, webp and gif'
+      );
+      Object.assign(error, {
+        code: 'invalid_image',
+      });
+      throw error;
+    }
+
+    const buff = Buffer.from(
+      base64.replace(/^data:image\/(png|jpe?g|webp|gif);base64,/, ''),
+      'base64'
+    );
+
+    let obj = await stickerSelect(buff, 0);
+
+    if (!obj) {
+      const error = new Error(
+        'Error with sharp library, check the console log'
+      );
+      Object.assign(error, {
+        code: 'sharp_error',
+      });
+      throw error;
+    }
+
+    const { webpBase64 } = obj;
+
+    return await evaluateAndReturn(
+      this.page,
+      ({ to, webpBase64 }) => {
+        return WPP.chat.sendFileMessage(to, webpBase64, {
+          type: 'sticker',
+        });
+      },
+      { to, webpBase64 }
+    );
   }
 
   /**
-   * TODO: Fix message not being delivered
+   * Sends location to given chat id
+   * @category Chat
+   * @param to Chat id
+   * @param options location options
+   */
+  public async sendLocation(to: string, options: LocationMessageOptions);
+  /**
    * Sends location to given chat id
    * @category Chat
    * @param to Chat id
@@ -842,19 +1014,35 @@ export class SenderLayer extends ListenerLayer {
     latitude: string,
     longitude: string,
     title: string
+  );
+  public async sendLocation(
+    to: string,
+    latitudeOrOptions: string | LocationMessageOptions,
+    longitude?: string,
+    title?: string
   ) {
-    const result = await evaluateAndReturn(
+    const options: LocationMessageOptions =
+      typeof latitudeOrOptions === 'string'
+        ? {
+            lat: latitudeOrOptions,
+            lng: longitude,
+            title: title,
+          }
+        : latitudeOrOptions;
+
+    return await evaluateAndReturn(
       this.page,
-      ({ to, latitude, longitude, title }) => {
-        return WAPI.sendLocation(to, latitude, longitude, title);
+      async ({ to, options }) => {
+        const result = await WPP.chat.sendLocationMessage(to, options);
+
+        return {
+          ack: result.ack,
+          id: result.id,
+          sendMsgResult: await result.sendMsgResult,
+        };
       },
-      { to, latitude, longitude, title }
+      { to, options: options as any }
     );
-    if (result['erro'] == true) {
-      throw result;
-    } else {
-      return result;
-    }
   }
 
   /**
@@ -871,9 +1059,32 @@ export class SenderLayer extends ListenerLayer {
   }
 
   /**
-   * Starts typing ('Typing...' state)
+   * Sets a audio or image view once. Marks message as played
    * @category Chat
-   * @param chatId
+   * @param msgId Message id: xxxxx@us.c
+   */
+  public async markPlayed(msgId: string) {
+    return evaluateAndReturn(
+      this.page,
+      (msgId) => WPP.chat.markPlayed(msgId),
+      msgId
+    );
+  }
+
+  /**
+   * Starts typing ('Typing...' state)
+   *
+   * @example
+   * ```javascript
+   * // Keep sending typing state, use stopTyping to finish
+   * await client.startTyping('[number]@c.us');
+   *
+   * // Keep sending typing state for 5 seconds
+   * await client.startTyping('[number]@c.us', 5000);
+   * ```
+   * @category Chat
+   * @param to Chat Id
+   * @param duration Duration um miliseconds
    */
   public async startTyping(to: string, duration?: number) {
     return evaluateAndReturn(
@@ -889,7 +1100,7 @@ export class SenderLayer extends ListenerLayer {
   /**
    * Stops typing ('Typing...' state)
    * @category Chat
-   * @param chatId
+   * @param to Chat Id
    */
   public async stopTyping(to: string) {
     return evaluateAndReturn(this.page, ({ to }) => WPP.chat.markIsPaused(to), {
@@ -899,8 +1110,17 @@ export class SenderLayer extends ListenerLayer {
 
   /**
    * Starts recording ('Recording...' state)
+   * @example
+   * ```javascript
+   * // Keep sending recording state, use stopRecoring to finish
+   * await client.startRecording('[number]@c.us');
+   *
+   * // Keep sending typing state for 5 seconds
+   * await client.startRecording('[number]@c.us', 5000);
+   * ```
    * @category Chat
-   * @param chatId
+   * @param to Chat Id
+   * @param duration Duration um miliseconds
    */
   public async startRecording(to: string, duration?: number) {
     return evaluateAndReturn(
@@ -916,7 +1136,7 @@ export class SenderLayer extends ListenerLayer {
   /**
    * Stops recording ('Recording...' state)
    * @category Chat
-   * @param chatId
+   * @param to Chat Id
    */
   public async stopRecoring(to: string) {
     return evaluateAndReturn(this.page, ({ to }) => WPP.chat.markIsPaused(to), {
@@ -932,7 +1152,7 @@ export class SenderLayer extends ListenerLayer {
   public async setOnlinePresence(online: boolean = true) {
     return evaluateAndReturn(
       this.page,
-      ({ online }) => WAPI.setOnlinePresence(online),
+      ({ online }) => WPP.conn.markAvailable(online),
       {
         online,
       }
@@ -986,15 +1206,93 @@ export class SenderLayer extends ListenerLayer {
    * @category Chat
    */
   public async sendListMessage(to: string, options: ListMessageOptions) {
-    return await evaluateAndReturn(
+    const sendResult = await evaluateAndReturn(
       this.page,
-      ({ to, options }) => {
-        WPP.chat.sendListMessage(to, options);
-      },
-      { to, options: options as unknown as JSONObject }
+      ({ to, options }) => WPP.chat.sendListMessage(to, options),
+      {
+        to,
+        options: options,
+      }
     );
+
+    // I don't know why the evaluate is returning undefined for direct call
+    // To solve that, I added `JSON.parse(JSON.stringify(<message>))` to solve that
+    const result = (await evaluateAndReturn(
+      this.page,
+      async ({ messageId }) => {
+        return JSON.parse(JSON.stringify(await WAPI.getMessageById(messageId)));
+      },
+      { messageId: sendResult.id }
+    )) as Message;
+
+    if (result['erro'] == true) {
+      throw result;
+    }
+
+    return result;
   }
 
+  /**
+   * Send a create poll message
+   *
+   * @example
+   * ```javascript
+   * // Single pool
+   * client.sendPollMessage(
+   *  '[number]@g.us',
+   *  'A poll name',
+   *  ['Option 1', 'Option 2', 'Option 3']
+   * );
+   * ```
+   * // Selectable Count
+   * ```javascript
+   * // Single pool
+   * client.sendPollMessage(
+   *  '[number]@g.us',
+   *  'A poll name',
+   *  ['Option 1', 'Option 2', 'Option 3'],
+   *  {
+   *    selectableCount: 1,
+   *  }
+   * );
+   * ```
+   *
+   * @category Chat
+   */
+  public async sendPollMessage(
+    chatId: string,
+    name: string,
+    choices: string[],
+    options?: PoolMessageOptions
+  ) {
+    const sendResult = await evaluateAndReturn(
+      this.page,
+      ({ chatId, name, choices, options }) =>
+        WPP.chat.sendCreatePollMessage(chatId, name, choices, options),
+      {
+        chatId,
+        name,
+        choices,
+        options: options,
+      }
+    );
+
+    // I don't know why the evaluate is returning undefined for direct call
+    // To solve that, I added `JSON.parse(JSON.stringify(<message>))` to solve that
+    const result = (await evaluateAndReturn(
+      this.page,
+      async ({ messageId }) => {
+        return JSON.parse(JSON.stringify(await WAPI.getMessageById(messageId)));
+      },
+      { messageId: sendResult.id }
+    )) as Message;
+
+    if (result['erro'] == true) {
+      throw result;
+    }
+
+    return result;
+  }
   /**
    * Sets the chat state
    * Deprecated in favor of Use startTyping or startRecording functions
@@ -1011,6 +1309,31 @@ export class SenderLayer extends ListenerLayer {
         WAPI.sendChatstate(chatState, chatId, duration);
       },
       { chatState, chatId, duration }
+    );
+  }
+
+  /**
+   * Send reaction to message
+   * @example
+   * ```javascript
+   * // For send Reaction, just to send emoji
+   * await client.sendReactionToMessage('[number]@c.us', '🤯');
+   *
+   * // to remove reacition
+   * await client.startRecording('[number]@c.us', false);
+   * ```
+   * @category Chat
+   * @param to Chat Id
+   * @param duration Duration um miliseconds
+   */
+  public async sendReactionToMessage(msgId: string, reaction: string | false) {
+    return evaluateAndReturn(
+      this.page,
+      ({ msgId, reaction }) => WPP.chat.sendReactionToMessage(msgId, reaction),
+      {
+        msgId,
+        reaction,
+      }
     );
   }
 }

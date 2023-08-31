@@ -17,8 +17,13 @@
 
 import { Page } from 'puppeteer';
 import { CreateConfig } from '../../config/create-config';
-import { evaluateAndReturn } from '../helpers';
-import { Id } from '../model';
+import {
+  evaluateAndReturn,
+  base64MimeType,
+  fileToBase64,
+  downloadFileToBase64,
+} from '../helpers';
+import { Id, Wid } from '../model';
 import { GroupProperty } from '../model/enum';
 import { RetrieverLayer } from './retriever.layer';
 
@@ -128,7 +133,7 @@ export class GroupLayer extends RetrieverLayer {
   public async createGroup(groupName: string, contacts: string | string[]) {
     return await evaluateAndReturn(
       this.page,
-      ({ groupName, contacts }) => WPP.group.create(groupName, contacts),
+      ({ groupName, contacts }) => WPP.group.create(groupName, contacts, null),
       { groupName, contacts }
     );
   }
@@ -163,14 +168,12 @@ export class GroupLayer extends RetrieverLayer {
     groupId: string,
     participantId: string | string[]
   ) {
-    await evaluateAndReturn(
+    return await evaluateAndReturn(
       this.page,
       ({ groupId, participantId }) =>
         WPP.group.addParticipants(groupId, participantId),
       { groupId, participantId }
     );
-
-    return true;
   }
 
   /**
@@ -296,6 +299,156 @@ export class GroupLayer extends RetrieverLayer {
       ({ groupId, property, value }) =>
         WPP.group.setProperty(groupId, property, value),
       { groupId, property, value }
+    );
+  }
+
+  /**
+   * Set group icon
+   * @category Group
+   * @param groupId Group ID ('000000-000000@g.us')
+   * @param base64 Image in base64 ( data:image/jpeg;base64,..... )
+   * @returns empty object
+   */
+  public async setGroupIcon(groupId: string, pathOrBase64: string) {
+    let base64: string = '';
+    if (pathOrBase64.startsWith('data:')) {
+      base64 = pathOrBase64;
+    } else {
+      let fileContent = await downloadFileToBase64(pathOrBase64, [
+        'image/gif',
+        'image/png',
+        'image/jpg',
+        'image/jpeg',
+        'image/webp',
+      ]);
+      if (!fileContent) {
+        fileContent = await fileToBase64(pathOrBase64);
+      }
+      if (fileContent) {
+        base64 = fileContent;
+      }
+    }
+
+    if (!base64) {
+      const error = new Error('Empty or invalid file or base64');
+      Object.assign(error, {
+        code: 'empty_file',
+      });
+      throw error;
+    }
+
+    const mimeInfo = base64MimeType(base64);
+
+    if (!mimeInfo || !mimeInfo.includes('image')) {
+      const error = new Error(
+        'Not an image, allowed formats png, jpeg and webp'
+      );
+      Object.assign(error, {
+        code: 'invalid_image',
+      });
+      throw error;
+    }
+
+    return await evaluateAndReturn(
+      this.page,
+      ({ groupId, base64 }) => WPP.group.setIcon(groupId, base64),
+      { groupId, base64 }
+    );
+  }
+  /**
+   * Set group subject (if allowed)
+   * @category Group
+   * @param groupId Group ID ('0000000000@g.us')
+   * @returns empty object
+   */
+  public async removeGroupIcon(groupId: string) {
+    if (!groupId) {
+      throw new Error('Empty or invalid group id');
+    }
+
+    return await evaluateAndReturn(
+      this.page,
+      ({ groupId }) => WPP.group.removeIcon(groupId),
+      { groupId }
+    );
+  }
+
+  /**
+   * Get the max number of participants for a group
+   * @category Group
+   * @returns number
+   */
+  public async getGroupSizeLimit() {
+    return await evaluateAndReturn(this.page, () =>
+      WPP.group.getGroupSizeLimit()
+    );
+  }
+
+  /**
+   * Approve a membership request to group
+   * @category Group
+   * @param groupId Group ID ('000000-000000@g.us')
+   * @param wid <number>@c.us
+   * @returns Promise
+   */
+  public async approveGroupMembershipRequest(
+    groupId: string,
+    membershipIds: string | string[]
+  ): Promise<
+    {
+      error: any;
+      wid: Wid;
+    }[]
+  > {
+    return await evaluateAndReturn(
+      this.page,
+      ({ groupId, membershipIds }) => WPP.group.approve(groupId, membershipIds),
+      { groupId, membershipIds }
+    );
+  }
+
+  /**
+   * Reject a membership request to group
+   * @category Group
+   * @param groupId Group ID ('000000-000000@g.us')
+   * @param wid <number>@c.us
+   * @returns Promise
+   */
+  public async rejectGroupMembershipRequest(
+    groupId: string,
+    membershipIds: string | string[]
+  ): Promise<
+    {
+      error: any;
+      wid: Wid;
+    }[]
+  > {
+    return await evaluateAndReturn(
+      this.page,
+      ({ groupId, membershipIds }) => WPP.group.reject(groupId, membershipIds),
+      { groupId, membershipIds }
+    );
+  }
+
+  /**
+   * Retrieve a list of a membership approval requests
+   * @category Group
+   * @param groupId Group ID ('000000-000000@g.us')
+   * @returns Promise
+   */
+  public async getGroupMembershipRequests(groupId: string): Promise<
+    {
+      addedBy: Wid;
+      id: Wid;
+      parentGroupId?: Wid;
+      requestMethod: 'InviteLink' | 'LinkedGroupJoin' | 'NonAdminAdd';
+      t: number;
+    }[]
+  > {
+    return await evaluateAndReturn(
+      this.page,
+      ({ groupId }) => WPP.group.getMembershipRequests(groupId),
+      { groupId }
     );
   }
 }

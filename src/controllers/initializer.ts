@@ -24,10 +24,15 @@ import { Browser } from 'puppeteer';
 import {
   CatchQRCallback,
   CreateOptions,
+  LoadingScreenCallback,
   StatusFindCallback,
 } from '../api/model/initializer';
 import { SessionToken } from '../token-store';
 import { defaultLogger } from '../utils/logger';
+import * as path from 'path';
+import * as fs from 'fs';
+import sanitize from 'sanitize-filename';
+import { sleep } from '../utils/sleep';
 
 process.on(
   'unhandledRejection',
@@ -62,6 +67,7 @@ export async function create(
   sessionName: string,
   catchQR?: CatchQRCallback,
   statusFind?: StatusFindCallback,
+  onLoadingScreen?: LoadingScreenCallback,
   options?: CreateConfig,
   browserSessionToken?: SessionToken
 ): Promise<Whatsapp>;
@@ -70,6 +76,7 @@ export async function create(
   sessionOrOption: string | CreateOptions,
   catchQR?: CatchQRCallback,
   statusFind?: StatusFindCallback,
+  onLoadingScreen?: LoadingScreenCallback,
   options?: CreateConfig,
   browserSessionToken?: SessionToken
 ): Promise<Whatsapp> {
@@ -93,6 +100,7 @@ export async function create(
     session = sessionOrOption.session;
     catchQR = sessionOrOption.catchQR || catchQR;
     statusFind = sessionOrOption.statusFind || statusFind;
+    onLoadingScreen = sessionOrOption.onLoadingScreen || onLoadingScreen;
 
     if (!options.sessionToken) {
       options.sessionToken =
@@ -106,7 +114,7 @@ export async function create(
 
   if (usingDeprecatedCreate) {
     logger.warn(
-      'You are using deprecated create method, please use create({options}) See: https://wppconnect-team.github.io/wppconnect/pages/Getting%20Started/creating-client.html#passing-options-on-create'
+      'You are using deprecated create method, please use create({options}) See: https://wppconnect.io/wppconnect/pages/Getting%20Started/creating-client.html#passing-options-on-create'
     );
   }
 
@@ -125,6 +133,32 @@ export async function create(
     // Get browser from page
     browser = page.browser();
   } else if (!browser && !page) {
+    if (
+      !mergedOptions.browserWS &&
+      !mergedOptions.puppeteerOptions?.userDataDir
+    ) {
+      mergedOptions.puppeteerOptions.userDataDir = path.resolve(
+        process.cwd(),
+        path.join(mergedOptions.folderNameToken, sanitize(session))
+      );
+
+      if (!fs.existsSync(mergedOptions.puppeteerOptions.userDataDir)) {
+        fs.mkdirSync(mergedOptions.puppeteerOptions.userDataDir, {
+          recursive: true,
+        });
+      }
+    }
+
+    if (!mergedOptions.browserWS) {
+      logger.info(
+        `Using browser folder '${mergedOptions.puppeteerOptions.userDataDir}'`,
+        {
+          session,
+          type: 'browser',
+        }
+      );
+    }
+
     // Initialize new browser
     logger.info('Initializing browser...', { session, type: 'browser' });
     browser = await initBrowser(session, mergedOptions, logger).catch((e) => {
@@ -198,22 +232,27 @@ export async function create(
 
   if (page) {
     const client = new Whatsapp(page, session, mergedOptions);
+    client.catchQR = catchQR;
+    client.statusFind = statusFind;
+    client.onLoadingScreen = onLoadingScreen;
+
+    await client.start();
 
     if (mergedOptions.waitForLogin) {
-      const isLogged = await client.waitForLogin(catchQR, statusFind);
+      const isLogged = await client.waitForLogin();
       if (!isLogged) {
         throw 'Not Logged';
       }
 
       let waitLoginPromise = null;
       client.onStateChange(async (state) => {
-        if (
-          state === SocketState.UNPAIRED ||
-          state === SocketState.UNPAIRED_IDLE
-        ) {
+        const connected = await page.evaluate(() => WPP.conn.isRegistered());
+        if (!connected) {
+          await sleep(2000);
+
           if (!waitLoginPromise) {
             waitLoginPromise = client
-              .waitForLogin(catchQR, statusFind)
+              .waitForLogin()
               .catch(() => {})
               .finally(() => {
                 waitLoginPromise = null;

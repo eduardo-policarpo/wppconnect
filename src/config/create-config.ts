@@ -82,6 +82,11 @@ export interface CreateConfig {
    */
   autoClose?: number;
   /**
+   * Automatically closes the wppconnect only when is syncing the device (default 180000 miliseconds, 3 minutes, if you want to turn it off, assign 0 or false)
+   * @default 180000 (3 minutes)
+   */
+  deviceSyncTimeout?: number;
+  /**
    * Wait for in chat to return a instance of {@link Whatsapp}
    * @default false
    */
@@ -95,12 +100,14 @@ export interface CreateConfig {
   /**
    * Initial token to log in in WhatsApp.
    * If not passed, the client will get it from {@link tokenStore}.
+   * @deprecated
    */
   sessionToken?: SessionToken;
 
   /**
    * Token store used to manage token {@link tokenStore}
    * @default 'file'
+   * @deprecated
    */
   tokenStore?: TokenStore | string;
 
@@ -136,7 +143,33 @@ export interface CreateConfig {
    * @default 'WPPConnect'
    */
   deviceName?: string | false;
+
+  /**
+   * Set custom Link Preview API servers
+   * @default null
+   */
+  linkPreviewApiServers?: string[] | null;
+
+  /**
+   * Disable custom Google Analytics
+   * @default true
+   */
+  disableGoogleAnalytics?: boolean;
+
+  /**
+   * Custom Google Analytics Tracker Id, like 'G-XXXXXXXXXX'
+   * collect analytics data to your GA account
+   * @default null
+   */
+  googleAnalyticsId?: string | null;
+
+  /**
+   * Custom variable for Google Analytics
+   * @default 'WPPConnect'
+   */
+  poweredBy?: string;
 }
+
 export const defaultOptions: CreateConfig = {
   folderNameToken: './tokens',
   headless: true,
@@ -150,10 +183,15 @@ export const defaultOptions: CreateConfig = {
   disableWelcome: false,
   updatesLog: true,
   autoClose: 60000,
+  deviceSyncTimeout: 180000,
   createPathFileToken: true,
   waitForLogin: true,
   logger: defaultLogger,
   tokenStore: 'file',
-  whatsappVersion: '2.2204.x',
+  whatsappVersion: '2.2331.x',
   deviceName: false,
+  linkPreviewApiServers: null,
+  disableGoogleAnalytics: true,
+  googleAnalyticsId: null,
+  poweredBy: 'WPPConnect',
 };

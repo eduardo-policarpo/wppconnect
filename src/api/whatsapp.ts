@@ -15,90 +15,62 @@
  * along with WPPConnect.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+import axios from 'axios';
 import { Page } from 'puppeteer';
+import { CreateConfig } from '../config/create-config';
+import { useragentOverride } from '../config/WAuserAgente';
+import { evaluateAndReturn } from './helpers';
+import { magix, makeOptions, timeout } from './helpers/decrypt';
 import { BusinessLayer } from './layers/business.layer';
 import { GetMessagesParam, Message } from './model';
-import { magix, timeout, makeOptions } from './helpers/decrypt';
-import { useragentOverride } from '../config/WAuserAgente';
-import { CreateConfig } from '../config/create-config';
-import axios from 'axios';
 import treekill = require('tree-kill');
-import { SocketState } from './model/enum';
-import { evaluateAndReturn } from './helpers';
 
 export class Whatsapp extends BusinessLayer {
+  private connected: boolean | null = null;
+
   constructor(public page: Page, session?: string, options?: CreateConfig) {
     super(page, session, options);
 
-    let connected = false;
-
-    const removeToken = async () => {
-      this.log('info', 'Session Unpaired', { type: 'session' });
-      const removed = await Promise.resolve(
-        this.tokenStore.removeToken(this.session)
-      );
-
-      if (removed) {
-        this.log('verbose', 'Token removed', { type: 'token' });
-      }
-    };
+    let interval: any = null;
 
     if (this.page) {
       this.page.on('close', async () => {
-        if (!connected) {
-          await removeToken();
-        }
+        clearInterval(interval);
       });
     }
 
-    this.onStateChange(async (state) => {
-      switch (state) {
-        case SocketState.CONNECTED:
-          connected = true;
-          // wait for localStore populate
-          setTimeout(async () => {
-            this.log('verbose', 'Updating session token', { type: 'token' });
-            const tokenData = await this.getSessionTokenBrowser();
-            const updated = await Promise.resolve(
-              this.tokenStore.setToken(this.session, tokenData)
-            );
+    interval = setInterval(async (state) => {
+      const newConnected = await page
+        .evaluate(() => WPP.conn.isRegistered())
+        .catch(() => null);
 
-            if (updated) {
-              this.log('verbose', 'Session token updated', {
-                type: 'token',
-              });
-            } else {
-              this.log('warn', 'Failed to update session token', {
-                type: 'token',
-              });
-            }
-          }, 1000);
-          break;
-
-        case SocketState.UNPAIRED:
-        case SocketState.UNPAIRED_IDLE:
-          setTimeout(async () => {
-            await removeToken();
-
-            // Fire only after a success connection and disconnection
-            if (connected && this.statusFind) {
-              try {
-                this.statusFind('desconnectedMobile', session);
-              } catch (error) {}
-            }
-
-            if (connected) {
-              await page.evaluate(() => localStorage.clear());
-              await page.reload();
-            }
-
-            connected = false;
-          }, 1000);
-          break;
+      if (newConnected === null || newConnected === this.connected) {
+        return;
       }
-    });
+
+      this.connected = newConnected;
+      if (!newConnected) {
+        this.log('info', 'Session Unpaired', { type: 'session' });
+        setTimeout(async () => {
+          if (this.statusFind) {
+            try {
+              this.statusFind('desconnectedMobile', session);
+            } catch (error) {}
+          }
+        }, 1000);
+      }
+    }, 1000);
   }
 
+  protected async afterPageScriptInjected() {
+    await super.afterPageScriptInjected();
+    this.page
+      .evaluate(() => WPP.conn.isRegistered())
+      .then((isAuthenticated) => {
+        this.connected = isAuthenticated;
+      })
+      .catch(() => null);
+  }
   /**
    * Decrypts message file
    * @param data Message object
@@ -136,6 +108,16 @@ export class Whatsapp extends BusinessLayer {
    */
   get waPage(): Page {
     return this.page;
+  }
+
+  /**
+   * Get the puppeteer page screenshot
+   * @returns The Whatsapp page screenshot encoded in base64
+   */
+  public async takeScreenshot() {
+    if (this.page) {
+      return await this.page.screenshot({ encoding: 'base64' });
+    }
   }
 
   /**
@@ -246,7 +228,7 @@ export class Whatsapp extends BusinessLayer {
   public async rejectCall(callId?: string) {
     return await evaluateAndReturn(
       this.page,
-      ({ callId }) => WAPI.rejectCall(callId),
+      ({ callId }) => WPP.call.rejectCall(callId),
       {
         callId,
       }

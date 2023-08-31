@@ -27,11 +27,13 @@ import {
   Message,
   ParticipantEvent,
   PresenceEvent,
+  Wid,
 } from '../model';
 import { MessageType, SocketState, SocketStream } from '../model/enum';
 import { InterfaceMode } from '../model/enum/interface-mode';
 import { InterfaceState } from '../model/enum/interface-state';
 import { ProfileLayer } from './profile.layer';
+import { Label } from '../model/label';
 
 declare global {
   interface Window {
@@ -51,6 +53,8 @@ export class ListenerLayer extends ProfileLayer {
 
   constructor(public page: Page, session?: string, options?: CreateConfig) {
     super(page, session, options);
+
+    this.listenerEmitter.setMaxListeners(0);
 
     this.listenerEmitter.on(ExposedFn.onInterfaceChange, (state) => {
       this.log('http', `Current state: ${state.mode} (${state.displayInfo})`);
@@ -73,14 +77,17 @@ export class ListenerLayer extends ProfileLayer {
     };
   }
 
-  protected async afterPageLoad() {
-    await super.afterPageLoad();
+  protected async afterPageScriptInjected() {
+    await super.afterPageScriptInjected();
 
     const functions = [
       ...Object.values(ExposedFn),
       'onAddedToGroup',
       'onIncomingCall',
       'onRevokedMessage',
+      'onReactionMessage',
+      'onPollResponse',
+      'onUpdateLabel',
     ];
 
     for (const func of functions) {
@@ -91,9 +98,18 @@ export class ListenerLayer extends ProfileLayer {
       if (!has) {
         this.log('debug', `Exposing ${func} function`);
         await this.page
-          .exposeFunction(func, (...args) =>
-            this.listenerEmitter.emit(func, ...args)
-          )
+          .exposeFunction(func, (...args) => {
+            Promise.resolve().then(() => {
+              const count = this.listenerEmitter.listenerCount(func);
+              if (count > 0) {
+                this.log(
+                  'debug',
+                  `Emitting ${func} event (${count} registered)`
+                );
+              }
+              this.listenerEmitter.emit(func, ...args);
+            });
+          })
           .catch(() => {});
       }
     }
@@ -102,11 +118,16 @@ export class ListenerLayer extends ProfileLayer {
       .evaluate(() => {
         try {
           if (!window['onMessage'].exposed) {
-            window.WAPI.waitNewMessages(false, (data) => {
-              data.forEach((message) => {
-                window['onMessage'](message);
-              });
+            WPP.on('chat.new_message', (msg) => {
+              if (msg.isSentByMe || msg.isStatusV3) {
+                return;
+              }
+              const serialized = WAPI.processMessageObj(msg, false, false);
+              if (serialized) {
+                window['onMessage'](serialized);
+              }
             });
+
             window['onMessage'].exposed = true;
           }
         } catch (error) {
@@ -122,7 +143,12 @@ export class ListenerLayer extends ProfileLayer {
         }
         try {
           if (!window['onAnyMessage'].exposed) {
-            window.WAPI.allNewMessagesListener(window['onAnyMessage']);
+            WPP.on('chat.new_message', (msg) => {
+              const serialized = WAPI.processMessageObj(msg, true, false);
+              if (serialized) {
+                window['onAnyMessage'](serialized);
+              }
+            });
             window['onAnyMessage'].exposed = true;
           }
         } catch (error) {
@@ -178,7 +204,7 @@ export class ListenerLayer extends ProfileLayer {
         }
         try {
           if (!window['onPresenceChanged'].exposed) {
-            window.WAPI.onPresenceChanged(window['onPresenceChanged']);
+            WPP.on('chat.presence_change', window['onPresenceChanged']);
             window['onPresenceChanged'].exposed = true;
           }
         } catch (error) {
@@ -194,7 +220,7 @@ export class ListenerLayer extends ProfileLayer {
         }
         try {
           if (!window['onRevokedMessage'].exposed) {
-            WPP.chat.on('msg_revoke', (data) => {
+            WPP.on('chat.msg_revoke', (data) => {
               const eventData = {
                 author: data.author,
                 from: data.from,
@@ -205,6 +231,68 @@ export class ListenerLayer extends ProfileLayer {
               window['onRevokedMessage'](eventData);
             });
             window['onRevokedMessage'].exposed = true;
+          }
+        } catch (error) {
+          console.error(error);
+        }
+        try {
+          if (!window['onReactionMessage'].exposed) {
+            WPP.on('chat.new_reaction', (data) => {
+              const eventData = {
+                id: data.id,
+                msgId: data.msgId,
+                reactionText: data.reactionText,
+                read: data.read,
+                orphan: data.orphan,
+                orphanReason: data.orphanReason,
+                timestamp: data.timestamp,
+              };
+              window['onReactionMessage'](eventData);
+            });
+            window['onReactionMessage'].exposed = true;
+          }
+        } catch (error) {
+          console.error(error);
+        }
+        try {
+          if (!window['onPollResponse'].exposed) {
+            WPP.on('chat.poll_response', (data) => {
+              const eventData = {
+                msgId: data.msgId,
+                chatId: data.chatId,
+                selectedOptions: data.selectedOptions,
+                timestamp: data.timestamp,
+                sender: data.sender,
+              };
+              window['onPollResponse'](eventData);
+            });
+            window['onPollResponse'].exposed = true;
+          }
+        } catch (error) {
+          console.error(error);
+        }
+        try {
+          if (!window['onUpdateLabel'].exposed) {
+            WPP.on('chat.update_label', (data) => {
+              const eventData = {
+                chat: data.chat,
+                ids: data.ids,
+                labels: data.labels,
+                type: data.type,
+              };
+              window['onUpdateLabel'](eventData);
+            });
+            window['onUpdateLabel'].exposed = true;
+          }
+        } catch (error) {
+          console.error(error);
+        }
+        try {
+          if (!window['onParticipantsChanged'].exposed) {
+            WPP.on('group.participant_changed', (participantChangedEvent) => {
+              window['onParticipantsChanged'](participantChangedEvent);
+            });
+            window['onParticipantsChanged'].exposed = true;
           }
         } catch (error) {
           console.error(error);
@@ -223,6 +311,7 @@ export class ListenerLayer extends ProfileLayer {
     event: string | symbol,
     listener: (...args: any[]) => void
   ) {
+    this.log('debug', `Registering ${event.toString()} event`);
     this.listenerEmitter.on(event, listener);
     return {
       dispose: () => {
@@ -347,9 +436,9 @@ export class ListenerLayer extends ProfileLayer {
    * @param to callback
    * @returns Stream of ParticipantEvent
    */
-  public onParticipantsChanged(
-    callback: (participantChangedEvent: ParticipantEvent) => void
-  ): { dispose: () => void };
+  public onParticipantsChanged(callback: (evData: ParticipantEvent) => void): {
+    dispose: () => void;
+  };
   /**
    * @event Listens to participants changed
    * @param to group id: xxxxx-yyyy@us.c
@@ -358,40 +447,30 @@ export class ListenerLayer extends ProfileLayer {
    */
   public onParticipantsChanged(
     groupId: string,
-    callback: (participantChangedEvent: ParticipantEvent) => void
+    callback: (evData: ParticipantEvent) => void
   ): { dispose: () => void };
   public onParticipantsChanged(
     groupId: any,
-    callback?: (participantChangedEvent: ParticipantEvent) => void
+    callback?: (evData: ParticipantEvent) => void
   ): { dispose: () => void } {
     if (typeof groupId === 'function') {
       callback = groupId;
       groupId = null;
     }
 
-    const subtypeEvents = ['invite', 'add', 'remove', 'leave'];
-
-    return this.registerEvent(
-      ExposedFn.onNotificationMessage,
-      (message: Message) => {
-        // Only group events
-        if (
-          message.type !== MessageType.GP2 ||
-          !subtypeEvents.includes(message.subtype)
-        ) {
-          return;
-        }
-        if (groupId && groupId !== message.id) {
-          return;
-        }
-        callback({
-          by: message.from,
-          groupId: message.chatId,
-          action: message.subtype as any,
-          who: message.recipients,
-        });
+    return this.registerEvent(ExposedFn.onParticipantsChanged, (evData) => {
+      if (groupId && groupId !== evData.groupId) {
+        return;
       }
-    );
+      callback({
+        by: evData.author,
+        byPushName: evData.authorPushName,
+        groupId: evData.groupId,
+        action: evData.action,
+        operation: evData.operation,
+        who: evData.participants,
+      });
+    });
   }
 
   /**
@@ -517,5 +596,54 @@ export class ListenerLayer extends ProfileLayer {
     }) => any
   ) {
     return this.registerEvent('onRevokedMessage', callback);
+  }
+
+  /**
+   * @event Listens to reaction messages
+   * @returns Disposable object to stop the listening
+   */
+  public onReactionMessage(
+    callback: (data: {
+      id: string;
+      msgId: string;
+      reactionText: string;
+      read: boolean;
+      orphan: number;
+      orphanReason: any;
+      timestamp: number;
+    }) => any
+  ) {
+    return this.registerEvent('onReactionMessage', callback);
+  }
+
+  /**
+   * @event Listens to poll response messages
+   * @returns Disposable object to stop the listening
+   */
+  public onPollResponse(
+    callback: (data: {
+      msgId: string;
+      chatId: Wid;
+      selectedOptions: any;
+      timestamp: number;
+      sender: Wid;
+    }) => any
+  ) {
+    return this.registerEvent('onPollResponse', callback);
+  }
+
+  /**
+   * @event Listens to update label
+   * @returns Disposable object to stop the listening
+   */
+  public onUpdateLabel(
+    callback: (data: {
+      chat: Chat;
+      ids: string[];
+      labels: Label[];
+      type: 'add' | 'remove';
+    }) => any
+  ) {
+    return this.registerEvent('onUpdateLabel', callback);
   }
 }

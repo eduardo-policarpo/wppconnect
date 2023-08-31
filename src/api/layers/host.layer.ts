@@ -16,76 +16,53 @@
  */
 
 import { Page } from 'puppeteer';
+import { Logger } from 'winston';
 import { CreateConfig, defaultOptions } from '../../config/create-config';
-import { SocketState } from '../model/enum';
-import { initWhatsapp, injectApi } from '../../controllers/browser';
-import { ScrapQrcode } from '../model/qrcode';
-import { evaluateAndReturn, scrapeImg } from '../helpers';
 import {
   asciiQr,
-  getInterfaceStatus,
   isAuthenticated,
   isInsideChat,
   needsToScan,
 } from '../../controllers/auth';
-import { sleep } from '../../utils/sleep';
+import { initWhatsapp, injectApi } from '../../controllers/browser';
 import { defaultLogger, LogLevel } from '../../utils/logger';
-import { Logger } from 'winston';
-import { CatchQRCallback, HostDevice, StatusFindCallback } from '../model';
+import { sleep } from '../../utils/sleep';
+import { evaluateAndReturn, scrapeImg } from '../helpers';
 import {
-  FileTokenStore,
-  isValidSessionToken,
-  isValidTokenStore,
-  MemoryTokenStore,
-  TokenStore,
-} from '../../token-store';
+  CatchQRCallback,
+  HostDevice,
+  LoadingScreenCallback,
+  StatusFindCallback,
+} from '../model';
+import { SocketState } from '../model/enum';
+import { ScrapQrcode } from '../model/qrcode';
 
 export class HostLayer {
   readonly session: string;
   readonly options: CreateConfig;
   readonly logger: Logger;
-  readonly tokenStore: TokenStore;
 
   protected autoCloseInterval = null;
   protected autoCloseCalled = false;
-  protected statusFind?: StatusFindCallback = null;
+
+  protected isInitialized = false;
+  protected isInjected = false;
+  protected isStarted = false;
+  protected isLogged = false;
+  protected isInChat = false;
+  protected checkStartInterval?: NodeJS.Timer = null;
+  protected urlCode = '';
+  protected attempt = 0;
+
+  public catchQR?: CatchQRCallback = null;
+  public statusFind?: StatusFindCallback = null;
+  public onLoadingScreen?: LoadingScreenCallback = null;
 
   constructor(public page: Page, session?: string, options?: CreateConfig) {
     this.session = session;
     this.options = { ...defaultOptions, ...options };
 
     this.logger = this.options.logger || defaultLogger;
-
-    if (typeof this.options.tokenStore === 'string') {
-      switch (this.options.tokenStore) {
-        case 'memory':
-          this.tokenStore = new MemoryTokenStore();
-          break;
-
-        case 'file':
-        default:
-          this.tokenStore = new FileTokenStore({
-            path: this.options.folderNameToken,
-          });
-          break;
-      }
-    } else {
-      this.tokenStore = this.options.tokenStore;
-    }
-
-    if (!isValidTokenStore(this.tokenStore)) {
-      this.log('warn', 'Invalid tokenStore, using default tokenStore', {
-        type: 'tokenStore',
-      });
-
-      if (this.options.folderNameToken) {
-        this.tokenStore = new FileTokenStore({
-          path: this.options.folderNameToken,
-        });
-      } else {
-        this.tokenStore = new MemoryTokenStore();
-      }
-    }
 
     this.log('info', 'Initializing...');
     this.initialize();
@@ -102,37 +79,17 @@ export class HostLayer {
   }
 
   protected async initialize() {
-    let sessionToken = this.options.sessionToken;
-    if (!sessionToken) {
-      sessionToken = await Promise.resolve(
-        this.tokenStore.getToken(this.session)
-      );
-    }
-
-    const isValidToken = isValidSessionToken(sessionToken);
-    if (isValidToken) {
-      this.log('verbose', 'Injecting session token', { type: 'token' });
-    }
-
-    const hasUserDataDir = !!this.options?.puppeteerOptions?.userDataDir;
-
-    let clear = !hasUserDataDir || (hasUserDataDir && !isValidToken);
-
-    await initWhatsapp(
-      this.page,
-      sessionToken,
-      clear,
-      this.options.whatsappVersion
-    );
+    this.page.on('close', () => {
+      this.cancelAutoClose();
+      this.log('verbose', 'Page Closed', { type: 'page' });
+    });
 
     this.page.on('load', () => {
       this.log('verbose', 'Page loaded', { type: 'page' });
       this.afterPageLoad();
     });
-    this.page.on('close', () => {
-      this.cancelAutoClose();
-      this.log('verbose', 'Page Closed', { type: 'page' });
-    });
+
+    this.isInitialized = true;
   }
 
   protected async afterPageLoad() {
@@ -140,6 +97,10 @@ export class HostLayer {
 
     const options = {
       deviceName: this.options.deviceName,
+      disableGoogleAnalytics: this.options.disableGoogleAnalytics,
+      googleAnalyticsId: this.options.googleAnalyticsId,
+      linkPreviewApiServers: this.options.linkPreviewApiServers,
+      poweredBy: this.options.poweredBy,
     };
 
     await evaluateAndReturn(
@@ -150,23 +111,118 @@ export class HostLayer {
       options
     );
 
-    await injectApi(this.page)
+    this.isInjected = false;
+
+    await injectApi(this.page, this.onLoadingScreen)
       .then(() => {
+        this.isInjected = true;
         this.log('verbose', 'wapi.js injected');
-        this.getWAVersion()
-          .then((version) => {
-            this.log('info', `WhatsApp WEB version: ${version}`);
-          })
-          .catch(() => null);
-        this.getWAJSVersion()
-          .then((version) => {
-            this.log('info', `WA-JS version: ${version}`);
-          })
-          .catch(() => null);
+        this.afterPageScriptInjected();
       })
       .catch((e) => {
+        console.log(e);
         this.log('verbose', 'wapi.js failed');
       });
+  }
+
+  protected async afterPageScriptInjected() {
+    this.getWAVersion()
+      .then((version) => {
+        this.log('info', `WhatsApp WEB version: ${version}`);
+      })
+      .catch(() => null);
+    this.getWAJSVersion()
+      .then((version) => {
+        this.log('info', `WA-JS version: ${version}`);
+      })
+      .catch(() => null);
+
+    evaluateAndReturn(this.page, () => {
+      WPP.on('conn.auth_code_change', (window as any).checkQrCode);
+    }).catch(() => null);
+    evaluateAndReturn(this.page, () => {
+      WPP.on('conn.main_ready', (window as any).checkInChat);
+    }).catch(() => null);
+    this.checkQrCode();
+    this.checkInChat();
+  }
+
+  public async start() {
+    if (this.isStarted) {
+      return;
+    }
+
+    this.isStarted = true;
+
+    await initWhatsapp(
+      this.page,
+      null,
+      false,
+      this.options.whatsappVersion,
+      this.log.bind(this)
+    );
+
+    await this.page.exposeFunction('checkQrCode', () => this.checkQrCode());
+    await this.page.exposeFunction('checkInChat', () => this.checkInChat());
+
+    this.checkStartInterval = setInterval(() => this.checkStart(), 5000);
+
+    this.page.on('close', () => {
+      clearInterval(this.checkStartInterval);
+    });
+  }
+
+  protected async checkStart() {
+    needsToScan(this.page)
+      .then((need) => {})
+      .catch(() => null);
+  }
+
+  protected async checkQrCode() {
+    const needScan = await needsToScan(this.page).catch(() => null);
+
+    this.isLogged = !needScan;
+    if (!needScan) {
+      this.attempt = 0;
+      return;
+    }
+
+    const result = await this.getQrCode();
+    if (!result?.urlCode || this.urlCode === result.urlCode) {
+      return;
+    }
+    this.urlCode = result.urlCode;
+    this.attempt++;
+
+    let qr = '';
+
+    if (this.options.logQR || this.catchQR) {
+      qr = await asciiQr(this.urlCode);
+    }
+
+    if (this.options.logQR) {
+      this.log(
+        'info',
+        `Waiting for QRCode Scan (Attempt ${this.attempt})...:\n${qr}`,
+        { code: this.urlCode }
+      );
+    } else {
+      this.log('verbose', `Waiting for QRCode Scan: Attempt ${this.attempt}`);
+    }
+
+    this.catchQR?.(result.base64Image, qr, this.attempt, result.urlCode);
+  }
+
+  protected async checkInChat() {
+    const inChat = await isInsideChat(this.page).catch(() => null);
+
+    this.isInChat = !!inChat;
+
+    if (!inChat) {
+      return;
+    }
+    this.log('http', 'Connected');
+    this.statusFind?.('inChat', this.session);
   }
 
   protected tryAutoClose() {
@@ -175,7 +231,7 @@ export class HostLayer {
     }
 
     if (
-      this.options.autoClose > 0 &&
+      (this.options.autoClose > 0 || this.options.deviceSyncTimeout > 0) &&
       !this.autoCloseInterval &&
       !this.page.isClosed()
     ) {
@@ -188,9 +244,13 @@ export class HostLayer {
     }
   }
 
-  protected startAutoClose() {
-    if (this.options.autoClose > 0 && !this.autoCloseInterval) {
-      const seconds = Math.round(this.options.autoClose / 1000);
+  protected startAutoClose(time: number | null = null) {
+    if (time === null || time === undefined) {
+      time = this.options.autoClose;
+    }
+
+    if (time > 0 && !this.autoCloseInterval) {
+      const seconds = Math.round(time / 1000);
       this.log('info', `Auto close configured to ${seconds}s`);
 
       let remain = seconds;
@@ -223,68 +283,52 @@ export class HostLayer {
     return qrResult;
   }
 
-  public async waitForQrCodeScan(catchQR?: CatchQRCallback) {
-    let urlCode = null;
-    let attempt = 0;
-
-    while (true) {
-      let needsScan = await needsToScan(this.page).catch(() => null);
-      if (!needsScan) {
-        break;
-      }
-
-      const result = await this.getQrCode();
-      if (result?.urlCode && urlCode !== result.urlCode) {
-        urlCode = result.urlCode;
-        attempt++;
-
-        let qr = '';
-
-        if (this.options.logQR || catchQR) {
-          qr = await asciiQr(urlCode);
-        }
-
-        if (this.options.logQR) {
-          this.log(
-            'info',
-            `Waiting for QRCode Scan (Attempt ${attempt})...:\n${qr}`,
-            { code: urlCode }
-          );
-        } else {
-          this.log('verbose', `Waiting for QRCode Scan: Attempt ${attempt}`);
-        }
-
-        if (catchQR) {
-          catchQR(result.base64Image, qr, attempt, result.urlCode);
-        }
-      }
+  public async waitForQrCodeScan() {
+    if (!this.isStarted) {
+      throw new Error('waitForQrCodeScan error: Session not started');
+    }
+    while (!this.page.isClosed() && !this.isLogged) {
       await sleep(200);
+      const needScan = await needsToScan(this.page).catch(() => null);
+      this.isLogged = !needScan;
     }
   }
 
   public async waitForInChat() {
-    let inChat = await isInsideChat(this.page);
-
-    while (inChat === false) {
-      await sleep(200);
-      inChat = await isInsideChat(this.page);
+    if (!this.isStarted) {
+      throw new Error('waitForInChat error: Session not started');
     }
-    return inChat;
+
+    if (!this.isLogged) {
+      return false;
+    }
+
+    const start = Date.now();
+
+    while (!this.page.isClosed() && this.isLogged && !this.isInChat) {
+      if (
+        this.options.deviceSyncTimeout > 0 &&
+        Date.now() - start >= this.options.deviceSyncTimeout
+      ) {
+        return false;
+      }
+
+      await sleep(1000);
+      const inChat = isInsideChat(this.page).catch(() => null);
+      this.isInChat = !!inChat;
+    }
+    return this.isInChat;
   }
 
   public async waitForPageLoad() {
-    await this.page
-      .waitForFunction(`!document.querySelector('#initial_startup')`)
-      .catch(() => {});
-    await getInterfaceStatus(this.page).catch(() => null);
+    while (!this.isInjected) {
+      await sleep(200);
+    }
+
+    await this.page.waitForFunction(() => WPP.isReady).catch(() => {});
   }
 
-  public async waitForLogin(
-    catchQR?: CatchQRCallback,
-    statusFind?: StatusFindCallback
-  ) {
-    this.statusFind = statusFind;
-
+  public async waitForLogin() {
     this.log('http', 'Waiting page load');
 
     await this.waitForPageLoad();
@@ -296,8 +340,8 @@ export class HostLayer {
 
     if (authenticated === false) {
       this.log('http', 'Waiting for QRCode Scan...');
-      statusFind && statusFind('notLogged', this.session);
-      await this.waitForQrCodeScan(catchQR);
+      this.statusFind?.('notLogged', this.session);
+      await this.waitForQrCodeScan();
 
       this.log('http', 'Checking QRCode status...');
       // Wait for interface update
@@ -306,39 +350,37 @@ export class HostLayer {
 
       if (authenticated === null) {
         this.log('warn', 'Failed to authenticate');
-        statusFind && statusFind('qrReadError', this.session);
+        this.statusFind?.('qrReadError', this.session);
       } else if (authenticated) {
         this.log('http', 'QRCode Success');
-        statusFind && statusFind('qrReadSuccess', this.session);
+        this.statusFind?.('qrReadSuccess', this.session);
       } else {
         this.log('warn', 'QRCode Fail');
-        statusFind && statusFind('qrReadFail', this.session);
+        this.statusFind?.('qrReadFail', this.session);
         this.tryAutoClose();
         throw 'Failed to read the QRCode';
       }
     } else if (authenticated === true) {
       this.log('http', 'Authenticated');
-      statusFind && statusFind('isLogged', this.session);
+      this.statusFind?.('isLogged', this.session);
     }
 
     if (authenticated === true) {
       // Reinicia o contador do autoclose
       this.cancelAutoClose();
-      this.startAutoClose();
       // Wait for interface update
       await sleep(200);
+      this.startAutoClose(this.options.deviceSyncTimeout);
       this.log('http', 'Checking phone is connected...');
       const inChat = await this.waitForInChat();
 
       if (!inChat) {
         this.log('warn', 'Phone not connected');
-        statusFind && statusFind('phoneNotConnected', this.session);
+        this.statusFind?.('phoneNotConnected', this.session);
         this.tryAutoClose();
         throw 'Phone not connected';
       }
       this.cancelAutoClose();
-      this.log('http', 'Connected');
-      statusFind && statusFind('inChat', this.session);
       return true;
     }
 
@@ -421,6 +463,14 @@ export class HostLayer {
   }
 
   /**
+   * Check is online
+   * @category Host
+   */
+  public async isOnline(): Promise<boolean> {
+    return await evaluateAndReturn(this.page, () => WPP.conn.isOnline());
+  }
+
+  /**
    * Retrieves if the phone is online. Please note that this may not be real time.
    * @category Host
    */
@@ -464,5 +514,49 @@ export class HostLayer {
    */
   public async isMultiDevice() {
     return await evaluateAndReturn(this.page, () => WPP.conn.isMultiDevice());
+  }
+  /**
+   * Retrieve main interface is authenticated, loaded and synced
+   * @category Host
+   */
+  public async isMainReady() {
+    return await evaluateAndReturn(this.page, () => WPP.conn.isMainReady());
+  }
+
+  /**
+   * Retrieve if is authenticated
+   * @category Host
+   */
+  public async isAuthenticated() {
+    return await evaluateAndReturn(this.page, () => WPP.conn.isAuthenticated());
+  }
+
+  /**
+   * Retrieve if main interface is authenticated and loaded, bot not synced
+   * @category Host
+   */
+  public async isMainLoaded() {
+    return await evaluateAndReturn(this.page, () => WPP.conn.isMainLoaded());
+  }
+
+  /**
+   * Retrieve if main interface is initializing
+   * @category Host
+   */
+  public async isMainInit() {
+    return await evaluateAndReturn(this.page, () => WPP.conn.isMainInit());
+  }
+
+  /**
+   * Join or leave of WhatsApp Web beta program.
+   * Will return the value seted
+   * @category Host
+   */
+  public async joinWebBeta(value: boolean): Promise<boolean> {
+    return await evaluateAndReturn(
+      this.page,
+      (value) => WPP.conn.joinWebBeta(value),
+      value
+    );
   }
 }

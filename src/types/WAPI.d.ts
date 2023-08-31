@@ -82,8 +82,8 @@ interface WAPI {
   getWAVersion: () => string;
   isConnected: () => boolean;
   isLoggedIn: () => boolean;
+  isRegistered: () => boolean;
   joinGroup: (groupId: string) => Promise<string | boolean>;
-  killServiceWorker: () => boolean;
   leaveGroup: (groupId: string) => any;
   loadAndGetAllMessagesInChat: (
     chatId: string,
@@ -106,9 +106,7 @@ interface WAPI {
     option: boolean,
     nonExistent?: boolean
   ) => Promise<object>;
-  rejectCall: (callId?: string) => Promise<number>;
-  restartService: () => boolean;
-  sendChatstate: (chatState: string, chatId: string, duration: number) => void;
+  sendChatstate: (chatState: string, chatId: string) => void;
   sendFile: (
     base64: string,
     to: string,
@@ -126,17 +124,6 @@ interface WAPI {
     quotedMessageId?: string,
     isViewOnce?: boolean
   ) => Promise<SendFileResult>;
-  sendImageAsSticker: (
-    webpBase64: string,
-    to: string,
-    metadata?: any,
-    type?: string
-  ) => Promise<SendStickerResult>;
-  sendImageAsStickerGif: (
-    webpBase64: string,
-    to: string,
-    metadata?: any
-  ) => Promise<SendStickerResult>;
   sendImageWithProduct: (
     base64: string,
     to: string,
@@ -201,6 +188,12 @@ interface WAPI {
   waitNewAcknowledgements: (callback: Function) => void;
   waitNewMessages: (rmCallback: boolean, callback: Function) => void;
   _profilePicfunc: (contactId: string) => Promise<ProfilePicThumbObj>;
+  _serializeChatObj: (chat: any) => any;
+  processMessageObj: (
+    messageObj: any,
+    includeMe: boolean,
+    includeNotifications: boolean
+  ) => any;
 }
 
 declare global {
