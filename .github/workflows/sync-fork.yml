@@ -3,22 +3,24 @@ name: Sync Fork
 on:
   schedule:
     - cron: '0 0 * * *' # Executa todos os dias à meia-noite
-  workflow_dispatch:
 
 jobs:
   sync-fork:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Fork Sync
-      # You may pin to the exact commit or the version.
-      # uses: tgymnich/fork-sync@0cc6ac48fd51415e7c34e5b8823021bc952a5f5f
-        uses: tgymnich/fork-sync@v1.2.1
-        with:
-          github_token: ${{ secrets.AUTH_TOKEN }}
-          # Branch to track
-          head: master # optional, default is master
-          # Branch to keep updated
-          base: master # optional, default is master
-          # Merge method to use
-          merge_method: merge # optional, default is merge
+    - name: Checkout código
+      uses: actions/checkout@v2
+      with:
+        token: ${{ secrets.AUTH_TOKEN }}
+
+    - name: Configurar remoto upstream
+      run: git remote add upstream https://github.com/wppconnect-team/wppconnect.git
+
+    - name: Sincronizar com upstream
+      run: git fetch upstream && git checkout master && git merge upstream/master
+
+    - name: Empurrar alterações para o fork
+      run: git push origin master
+      env:
+        GITHUB_TOKEN: ${{ secrets.AUTH_TOKEN }}
