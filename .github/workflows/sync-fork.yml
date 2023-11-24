@@ -15,7 +15,7 @@ jobs:
       # uses: tgymnich/fork-sync@0cc6ac48fd51415e7c34e5b8823021bc952a5f5f
         uses: tgymnich/fork-sync@v1.2.1
         with:
-          github_token: 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
+          github_token: ${{ secrets.AUTH_TOKEN }}
           # Branch to track
           head: master # optional, default is master
           # Branch to keep updated
