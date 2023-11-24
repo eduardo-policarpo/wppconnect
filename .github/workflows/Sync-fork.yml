@@ -3,6 +3,7 @@ name: Sync Fork
 on:
   schedule:
     - cron: '0 0 * * *' # Executa todos os dias à meia-noite
+  workflow_dispatch:
 
 jobs:
   sync-fork:
