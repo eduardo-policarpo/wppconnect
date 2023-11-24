@@ -1,0 +1,26 @@
+name: Sync Fork
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # Executa todos os dias à meia-noite
+
+jobs:
+  sync-fork:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout código
+      uses: actions/checkout@v2
+      with:
+        token: ${{ secrets.AUTH_TOKEN }}
+
+    - name: Configurar remoto upstream
+      run: git remote add upstream https://github.com/WhiskeySockets/Baileys.git
+
+    - name: Sincronizar com upstream
+      run: git fetch upstream && git checkout master && git merge upstream/master
+
+    - name: Empurrar alterações para o fork
+      run: git push origin master
+      env:
+        GITHUB_TOKEN: ${{ secrets.AUTH_TOKEN }}
