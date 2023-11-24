@@ -17,8 +17,8 @@ jobs:
     
     - name: Configuração de Usuário e E-mail do Git
       run: |
-        git config --global user.email "eduardopolicarpo@gmail.com"
-        git config --global user.name "edupoli"
+        git config --global user.email eduardopolicarpo@gmail.com
+        git config --global user.name eduardo-policarpo
 
     - name: Configurar remoto upstream com token
       run: |
